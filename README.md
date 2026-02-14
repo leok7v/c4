@@ -13,3 +13,7 @@ Try the following:
     ./build/c4 c4.c hello.c
     ./build/c4 c4.c c4.c hello.c
 
+Run tests:
+
+    ./build/c4 test/test.c
+
