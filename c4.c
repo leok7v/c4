@@ -528,8 +528,8 @@ int main(int argc, char **argv)
     else if (i == WRIT) a = write(sp[2], (char *)sp[1], *sp);
     else if (i == SYST) a = system((char *)*sp);
     else if (i == POPN) a = (int)popen((char *)sp[1], (char *)*sp);
-    else if (i == PCLS) a = pclose((FILE *)*sp);
-    else if (i == FRED) a = fread((void *)sp[3], sp[2], sp[1], (FILE *)*sp);
+    else if (i == PCLS) a = pclose((void *)*sp);
+    else if (i == FRED) a = fread((void *)sp[3], sp[2], sp[1], (void *)*sp);
     else { printf("unknown instruction = %d! cycle = %d\n", i, cycle); return -1; }
   }
 }
