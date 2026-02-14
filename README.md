@@ -5,10 +5,11 @@ An exercise in minimalism.
 
 Try the following:
 
-    gcc -o c4 c4.c
-    ./c4 hello.c
-    ./c4 -s hello.c
+    mkdir -p build
+    gcc -o build/c4 c4.c
+    ./build/c4 hello.c
+    ./build/c4 -s hello.c
     
-    ./c4 c4.c hello.c
-    ./c4 c4.c c4.c hello.c
+    ./build/c4 c4.c hello.c
+    ./build/c4 c4.c c4.c hello.c
 
