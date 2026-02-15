@@ -146,3 +146,10 @@ All tests passing with clean exit codes (0):
 ### 3. Code Quality Improvements (Priority: Low)
 - **Bad Address-Of Fragility**: The `&` operator checks generated instructions (`*(e-1)`) which is hacky. Consider adding a flag to track addressable expressions.
 - **Memory Management**: Member lists are `malloc`'d but never freed (acceptable for a toy compiler).
+
+## Development Notes
+
+### Testing
+- Use `./tmp/` directory for temporary test files (not `/tmp/`)
+- The `./tmp/` directory is gitignored for local testing convenience
+- Debug binaries (`c4_debug`, `c4_gcc`, `c4_old`) are also gitignored
