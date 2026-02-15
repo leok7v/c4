@@ -718,7 +718,7 @@ int main(int argc, char **argv)
     else if (i == DIV) a = *sp++ /  a;
     else if (i == MOD) a = *sp++ %  a;
 
-    else if (i == OPEN) a = open((char *)sp[2], sp[1], *sp);
+    else if (i == OPEN) a = (pc[1] == 2) ? open((char *)sp[1], *sp) : open((char *)sp[2], sp[1], *sp);
     else if (i == READ) a = read(sp[2], (char *)sp[1], *sp);
     else if (i == CLOS) a = close(*sp);
     else if (i == PRTF) { t = sp + pc[1]; a = printf((char *)t[-1], t[-2], t[-3], t[-4], t[-5], t[-6]); }
