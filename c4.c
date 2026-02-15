@@ -21,13 +21,15 @@ char *p, *lp, // current position in source code
 int64_t *e, *le,  // current position in emitted code
     *id,      // currently parsed identifier
     *sym,     // symbol table (simple list of identifiers)
+    *struct_syms, // struct type table (ID -> symbol entry)
     tk,       // current token
     ival,     // current token value
     ty,       // current expression type
     loc,      // local variable offset
     line,     // current line number
     src,      // print source and assembly flag
-    debug;    // print executed instructions
+    debug,    // print executed instructions
+    num_structs; // number of defined structs
 
 // tokens and classes (operators last and in precedence order)
 enum {
@@ -42,7 +44,7 @@ enum { LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,LI32,SI  ,SC  ,SI3
        OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,EXIT,WRIT,SYST,POPN,PCLS,FRED };
 
 // types
-enum { CHAR, INT32, INT64, PTR };
+enum { CHAR, INT32, INT64, PTR = 256 };
 
 // identifier offsets (since we can't create an ident struct)
 enum { Tk, Hash, Name, Class, Type, Val, HClass, HType, HVal, Utyedef, Extent, Sline, Idsz };
@@ -133,9 +135,32 @@ void next()
   }
 }
 
+void memacc()
+{
+  int64_t *s, *m, t;
+  if (tk != Id) { printf("%d: bad struct member\n", (int)line); exit(-1); }
+  s = (int64_t *)struct_syms[ty - INT64 - 1];
+  m = (int64_t *)s[Sline];
+  t = 0;
+  while (m && !t) {
+    if (m[0] == id[Hash]) {
+      *++e = PSH; *++e = IMM; *++e = m[2]; *++e = ADD;
+      ty = m[1];
+      if (ty == CHAR) *++e = LC;
+      else if (ty == INT32) *++e = LI32;
+      else if (ty > INT64 && ty < PTR) ; // nested struct, keep address
+      else *++e = LI;
+      t = 1;
+    }
+    else m = (int64_t *)m[3];
+  }
+  if (!t) { printf("%d: member not found\n", (int)line); exit(-1); }
+  next();
+}
+
 void expr(int64_t lev)
 {
-  int64_t t, *d, is_struct_value, is_struct_val, base_ty, elem_ty, *s, *m, i;
+  int64_t t, *d, base_ty, elem_ty;
 
   if (!tk) { printf("%d: unexpected eof in expression\n", (int)line); exit(-1); }
   else if (tk == Num) { *++e = IMM; *++e = ival; next(); ty = INT64; }
@@ -179,39 +204,10 @@ void expr(int64_t lev)
       else { printf("%d: undefined variable\n", (int)line); exit(-1); }
       ty = d[Type];
       
-      // Load value based on type:
-      // - CHAR: use LC (load char)
-      // - INT32: use LI32 (load 32-bit int)
-      // - INT64 or pointers: use LI (load 64-bit)
-      // - Struct values (not pointers): keep address, don't load
-      // 
-      // Type encoding:
-      //   CHAR=0, INT32=1, INT64=2, PTR=3
-      //   Pointers: base_type + PTR (e.g., int32_t* = 4, int32_t** = 7, int64_t* = 5)
-      //   Struct IDs are large addresses (symbol table pointers, > 1000)
-      //   Struct pointers: StructID + PTR, StructID + PTR + PTR, etc.
-      //
-      // Struct value detection: check if ty is a struct ID (not a pointer)
-      // Struct IDs are symbol table addresses (large values > 100)
-      // Pointers are: base_type + n*PTR where base_type < PTR
-      // Struct pointers are: struct_id + n*PTR
-      // To detect struct value: strip PTR layers and see if we're left with a large value
-      // For very large values (StructIDs which are symbol table addresses),
-      // use alignment to distinguish: StructIDs are 8-byte aligned, StructID+PTR is not
-      if (ty >= 10000) {
-        // Large value - check alignment
-        is_struct_value = ((ty & 7) == 0);
-      } else {
-        // Small value - strip PTR layers normally
-        base_ty = ty;
-        while (base_ty >= PTR) base_ty = base_ty - PTR;
-        is_struct_value = (ty > 100) && (base_ty == ty);
-      }
-      
       if (ty == CHAR) *++e = LC;
       else if (ty == INT32) *++e = LI32;
-      else if (is_struct_value) ; // Struct value, keep address
-      else *++e = LI; // INT64, pointers, or struct pointers
+      else if (ty > INT64 && ty < PTR) ; // struct value, keep address
+      else *++e = LI;
     }
   }
   else if (tk == '(') {
@@ -237,46 +233,14 @@ void expr(int64_t lev)
     if (ty > INT64) ty = ty - PTR; else { printf("%d: bad dereference\n", (int)line); exit(-1); }
     if (ty == CHAR) *++e = LC;
     else if (ty == INT32) *++e = LI32;
+    else if (ty > INT64 && ty < PTR) ; // struct value, keep address
     else *++e = LI;
   }
   else if (tk == And) {
     next(); expr(Inc);
     if (*e == LC || *e == LI32 || *e == LI) --e;
-    // If it's a struct (LC/LI skipped), we accept it.
-    // How to distinguish? ty > PTR.
-    // Also need to check if result is an lvalue address.
-    // e would be LEA or IMM or ADD etc.
-    // c4 normally ONLY accepts lvalues which END with LC/LI.
-    // If we skip LC/LI, the last instruction is the address computation.
-    // So we just don't decrement e!
-    // But we need to ensure we don't error "bad address-of".
-    // So:
-    // if (*e == LC || *e == LI) --e;
-    // else if (ty > PTR && (ty & 3) == 0 && (*e == LEA || *e == IMM || *e == ADD || *e == ADJ)) ; // Accept address
-    // else error.
-    // Wait, `p` (pointer to struct) -> ty = StructID + PTR.
-    // `p` IS a pointer. `&p` is address of pointer.
-    // `p` logic emits `LI`. So `&p` works (remove `LI`, get `LEA location_of_p`).
-    // `Struct s`. `s`. logic emits LEA. No LI.
-    // `&s`. `expr` emits LEA.
-    // `&` sees LEA. `ty` is StructID.
-    // Correct.
-    // So:
-    else if (*(e-1) == LEA || *(e-1) == IMM || *(e-1) == ADJ || *e == ADD) {
-        // Only valid if it WAS a struct value that we declined to load.
-      // Check if ty is a struct value using alignment for large values
-      if (ty >= 10000) {
-        if ((ty & 7) == 0) ; // Struct value - accepted
-        else { printf("%d: bad address-of\n", (int)line); exit(-1); }
-      } else {
-        base_ty = ty;
-        while (base_ty >= PTR) base_ty = base_ty - PTR;
-        if (ty > 100 && base_ty == ty) ; // Struct value - accepted
-        else { printf("%d: bad address-of\n", (int)line); exit(-1); }
-      }
-    }
+    else if (ty > INT64 && ty < PTR) ; // struct value, address already in accumulator
     else { printf("%d: bad address-of\n", (int)line); exit(-1); }
-
     ty = ty + PTR;
   }
   else if (tk == '!') { next(); expr(Inc); *++e = PSH; *++e = IMM; *++e = 0; *++e = EQ; ty = INT64; }
@@ -322,120 +286,29 @@ void expr(int64_t lev)
       if (ty > INT64) {
         ty = ty - PTR;
         *++e = IMM;
-        // Calculate element size
         if (ty == CHAR) *++e = sizeof(char);
         else if (ty == INT32) *++e = 4;
-        else *++e = sizeof(int64_t); // INT64 or pointers
+        else *++e = sizeof(int64_t);
         *++e = MUL;
       }
       else { printf("%d: bad pointer in index\n", (int)line); exit(-1); }
       *++e = ADD;
       if (ty == CHAR) *++e = LC;
       else if (ty == INT32) *++e = LI32;
+      else if (ty > INT64 && ty < PTR) ; // struct value in array
       else *++e = LI;
     }
     else if (tk == '.') {
       next();
-      // Detect struct value: for large values use alignment, for small values strip PTR
-      if (ty >= 10000) {
-        is_struct_val = ((ty & 7) == 0);
-      } else {
-        base_ty = ty;
-        while (base_ty >= PTR) base_ty = base_ty - PTR;
-        is_struct_val = (ty > 100) && (base_ty == ty);
-      }
-      if (is_struct_val) ; // Struct Value. Address in Accumulator.
-      else if (*e == LC || *e == LI32 || *e == LI) *e = PSH; // Value in Accumulator?
-      else { printf("%d: bad struct value\n", (int)line); exit(-1); }
-
-      if (tk != Id) { printf("%d: bad struct member\n", (int)line); exit(-1); }
-      
-      // Calculate member offset from struct metadata
-      // ty is StructID.
-      // We need to look up member in (int*)ty.
-      // But `c4` stores whole symbol entry as `StructID`.
-      // The symbol entry is `int *s`. `s[Sline]` points to member list.
-      // Member list is linked list of `int *m`.
-      // m[0]=Hash, m[1]=Type, m[2]=Offset, m[3]=NextMember.
-
-      s = (int64_t *)ty;
-      m = (int64_t *)s[Sline];
-      t = 0;
-      while (m && !t) {
-        if (m[0] == id[Hash]) {
-           *++e = PSH; *++e = IMM; *++e = m[2]; *++e = ADD;
-           ty = m[1];
-           if (ty == CHAR) *++e = LC;
-           else if (ty == INT32) *++e = LI32;
-           else if (ty == INT64) *++e = LI;
-           else {
-             elem_ty = ty;
-             i = 0;
-             while (elem_ty >= PTR && i < 100) {
-               elem_ty = elem_ty - PTR;
-               i = i + 1;
-             }
-             if (i >= 100) elem_ty = ty;
-             if (elem_ty != ty) *++e = LI;
-           }
-           t = 1;
-        }
-        else {
-          m = (int64_t *)m[3];
-        }
-      }
-      if (!t) { printf("%d: member not found\n", (int)line); exit(-1); }
-      next();
+      if (ty <= INT64 || ty >= PTR) { printf("%d: not a struct\n", (int)line); exit(-1); }
+      memacc();
     }
     else if (tk == Arrow) {
       next();
-      if (*e == LC || *e == LI32 || *e == LI) ; // Already loaded pointer.
-      else { printf("%d: bad struct pointer for arrow\n", (int)line); exit(-1); }
-      // printf("ty=%d PTR=%d\n", ty, PTR);
-      if (ty > PTR) {
-        ty = ty - PTR;
-        // Check if dereferenced type is a struct value (should not be for arrow operator)
-        if (ty >= 10000) {
-          if ((ty & 7) == 0) { printf("%d: not a struct pointer\n", (int)line); exit(-1); }
-        } else {
-          base_ty = ty;
-          while (base_ty >= PTR) base_ty = base_ty - PTR;
-          if (base_ty == ty || ty <= PTR) { printf("%d: not a struct pointer\n", (int)line); exit(-1); }
-        }
-      }
-      else { printf("%d: not a struct pointer\n", (int)line); exit(-1); }
-
-
-      if (tk != Id) { printf("%d: bad struct member\n", (int)line); exit(-1); }
-
-      s = (int64_t *)ty;
-      m = (int64_t *)s[Sline];
-      t = 0;
-      while (m && !t) {
-        if (m[0] == id[Hash]) {
-           *++e = PSH; *++e = IMM; *++e = m[2]; *++e = ADD;
-           ty = m[1];
-           if (ty == CHAR) *++e = LC;
-           else if (ty == INT32) *++e = LI32;
-           else if (ty == INT64) *++e = LI;
-           else {
-             elem_ty = ty;
-             i = 0;
-             while (elem_ty >= PTR && i < 100) {
-               elem_ty = elem_ty - PTR;
-               i = i + 1;
-             }
-             if (i >= 100) elem_ty = ty;
-             if (elem_ty != ty) *++e = LI;
-           }
-           t = 1;
-        }
-        else {
-          m = (int64_t *)m[3];
-        }
-      }
-      if (!t) { printf("%d: member not found\n", (int)line); exit(-1); }
-      next();
+      if (ty < PTR) { printf("%d: not a pointer\n", (int)line); exit(-1); }
+      ty = ty - PTR;
+      if (ty <= INT64 || ty >= PTR) { printf("%d: not a struct pointer\n", (int)line); exit(-1); }
+      memacc();
     }
   }
 
@@ -556,7 +429,11 @@ void expr(int64_t lev)
       }
       else if (t < PTR) { printf("%d: pointer type expected\n", (int)line); exit(-1); }
       *++e = ADD;
-      *++e = ((ty = t - PTR) == CHAR) ? LC : LI;
+      ty = t - PTR;
+      if (ty == CHAR) *++e = LC;
+      else if (ty == INT32) *++e = LI32;
+      else if (ty > INT64 && ty < PTR) ; // struct value
+      else *++e = LI;
     }
     else { printf("%d: compiler error tk=%d\n", (int)line, (int)tk); exit(-1); }
   }
@@ -614,7 +491,7 @@ void stmt()
 
 int main(int argc, char **argv)
 {
-  int64_t fd, bt, ty, poolsz, *idmain, *s, *m, base_ty;
+  int64_t fd, bt, ty, poolsz, *idmain, *s, *m;
   int64_t *pc, *sp, *bp, a, cycle;
   int64_t i, *t;
 
@@ -631,10 +508,12 @@ int main(int argc, char **argv)
   if (!(le = e = malloc(poolsz))) { printf("could not malloc(%d) text area\n", (int)poolsz); return -1; }
   if (!(data = malloc(poolsz))) { printf("could not malloc(%d) data area\n", (int)poolsz); return -1; }
   if (!(sp = malloc(poolsz))) { printf("could not malloc(%d) stack area\n", (int)poolsz); return -1; }
+  if (!(struct_syms = malloc(256 * sizeof(int64_t)))) { printf("could not malloc struct_syms\n"); return -1; }
 
   memset(sym,  0, poolsz);
   memset(e,    0, poolsz);
   memset(data, 0, poolsz);
+  memset(struct_syms, 0, 256 * sizeof(int64_t));
 
   p = "char else enum if int int32_t int64_t return sizeof struct typedef union while "
       "open read close printf malloc free memset memcmp exit write system popen pclose fread void main";
@@ -684,16 +563,19 @@ int main(int argc, char **argv)
       if (tk != '{') {
         s = id;
         next();
-        if (id[Class] == Struct) bt = id[Type];
-        
+        if (s[Class] == Struct) bt = s[Type];
+
         // Restore id if we are defining it now
         if (tk == '{') id = s;
       }
       if (tk == '{') {
         s = id;
         s[Class] = Struct;
-        s[Type] = (int64_t)s; 
-        s[Sline] = 0; 
+        if (num_structs >= PTR - INT64 - 1) { printf("%d: too many structs\n", (int)line); return -1; }
+        s[Type] = INT64 + 1 + num_structs;
+        struct_syms[num_structs] = (int64_t)s;
+        num_structs = num_structs + 1;
+        s[Sline] = 0;
         
         next();
         i = 0; 
@@ -726,19 +608,8 @@ int main(int argc, char **argv)
 
             if (ty == CHAR) i = i + sizeof(char);
             else if (ty == INT32) i = i + 4;
-            else if (ty == INT64) i = i + sizeof(int64_t);
-            else {
-              // Check if ty is a pointer or struct value
-              if (ty >= 10000) {
-                if ((ty & 7) == 0) i = i + ((int64_t *)ty)[Val]; // Struct value
-                else i = i + sizeof(int64_t); // Pointer
-              } else {
-                base_ty = ty;
-                while (base_ty >= PTR) base_ty = base_ty - PTR;
-                if (base_ty != ty) i = i + sizeof(int64_t); // Pointer
-                else i = i + ((int64_t *)ty)[Val]; // Struct value
-              }
-            }
+            else if (ty > INT64 && ty < PTR) i = i + ((int64_t *)struct_syms[ty - INT64 - 1])[Val];
+            else i = i + sizeof(int64_t);
  
             next();
             if (tk == ',') next();
@@ -805,7 +676,10 @@ int main(int argc, char **argv)
             if (id[Class] == Loc) { printf("%d: duplicate local definition\n", (int)line); return -1; }
             id[HClass] = id[Class]; id[Class] = Loc;
             id[HType]  = id[Type];  id[Type] = ty;
-            id[HVal]   = id[Val];   id[Val] = ++i;
+            id[HVal]   = id[Val];
+            if (ty > INT64 && ty < PTR) i = i + (((int64_t *)struct_syms[ty - INT64 - 1])[Val] + 7) / 8;
+            else ++i;
+            id[Val] = i;
             next();
             if (tk == ',') next();
           }
@@ -827,10 +701,10 @@ int main(int argc, char **argv)
       else {
         id[Class] = Glo;
         id[Val] = (int64_t)data;
-        // Allocate space based on type
         if (ty == CHAR) data = data + sizeof(char);
         else if (ty == INT32) data = data + 4;
-        else data = data + sizeof(int64_t); // INT64, pointers, or structs
+        else if (ty > INT64 && ty < PTR) data = data + ((int64_t *)struct_syms[ty - INT64 - 1])[Val];
+        else data = data + sizeof(int64_t);
       }
       if (tk == ',') next();
     }
