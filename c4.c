@@ -282,7 +282,7 @@ void expr(int64_t lev)
     if (tk == Brak) {
       t = ty; // save array/pointer type
       next();
-      if (*e == LC || *e == LI32 || *e == LI) *e = PSH; else *++e = PSH;
+      *++e = PSH;
       expr(Assign);
       if (tk == ']') next(); else { printf("%d: close bracket expected\n", (int)line); exit(-1); }
       if (t > INT64) {
