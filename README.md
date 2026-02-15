@@ -13,6 +13,13 @@ Try the following:
     ./build/c4 c4.c hello.c
     ./build/c4 c4.c c4.c hello.c
 
+Command Line Options
+--------------------
+
+    -s      dump source and assembly
+    -d      dump debug execution trace
+    --      end of options (pass remaining arguments to script)
+
 Run tests:
 
     ./build/c4 test/test.c
