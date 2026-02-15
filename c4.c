@@ -30,8 +30,8 @@ int *e, *le,  // current position in emitted code
 // tokens and classes (operators last and in precedence order)
 enum {
   Num = 128, Fun, Sys, Glo, Loc, Id,
-  Char, Else, Enum, If, Int, Return, Sizeof, While,
-  Assign, Cond, Lor, Lan, Or, Xor, And, Eq, Ne, Lt, Gt, Le, Ge, Shl, Shr, Add, Sub, Mul, Div, Mod, Inc, Dec, Brak
+  Char, Else, Enum, If, Int, Return, Sizeof, Struct, Typedef, Union, While,
+  Assign, Cond, Lor, Lan, Or, Xor, And, Eq, Ne, Lt, Gt, Le, Ge, Shl, Shr, Add, Sub, Mul, Div, Mod, Inc, Dec, Brak, Arrow
 };
 
 // opcodes
@@ -43,7 +43,7 @@ enum { LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,
 enum { CHAR, INT, PTR };
 
 // identifier offsets (since we can't create an ident struct)
-enum { Tk, Hash, Name, Class, Type, Val, HClass, HType, HVal, Idsz };
+enum { Tk, Hash, Name, Class, Type, Val, HClass, HType, HVal, Utyedef, Extent, Sline, Idsz };
 
 void next()
 {
@@ -116,7 +116,7 @@ void next()
     }
     else if (tk == '=') { if (*p == '=') { ++p; tk = Eq; } else tk = Assign; return; }
     else if (tk == '+') { if (*p == '+') { ++p; tk = Inc; } else tk = Add; return; }
-    else if (tk == '-') { if (*p == '-') { ++p; tk = Dec; } else tk = Sub; return; }
+    else if (tk == '-') { if (*p == '-') { ++p; tk = Dec; } else if (*p == '>') { ++p; tk = Arrow; } else tk = Sub; return; }
     else if (tk == '!') { if (*p == '=') { ++p; tk = Ne; } return; }
     else if (tk == '<') { if (*p == '=') { ++p; tk = Le; } else if (*p == '<') { ++p; tk = Shl; } else tk = Lt; return; }
     else if (tk == '>') { if (*p == '=') { ++p; tk = Ge; } else if (*p == '>') { ++p; tk = Shr; } else tk = Gt; return; }
@@ -127,7 +127,7 @@ void next()
     else if (tk == '*') { tk = Mul; return; }
     else if (tk == '[') { tk = Brak; return; }
     else if (tk == '?') { tk = Cond; return; }
-    else if (tk == '~' || tk == ';' || tk == '{' || tk == '}' || tk == '(' || tk == ')' || tk == ']' || tk == ',' || tk == ':') return;
+    else if (tk == '~' || tk == ';' || tk == '{' || tk == '}' || tk == '(' || tk == ')' || tk == ']' || tk == ',' || tk == ':' || tk == '.') return;
   }
 }
 
@@ -168,7 +168,19 @@ void expr(int lev)
       if (d[Class] == Loc) { *++e = LEA; *++e = loc - d[Val]; }
       else if (d[Class] == Glo) { *++e = IMM; *++e = d[Val]; }
       else { printf("%d: undefined variable\n", line); exit(-1); }
-      *++e = ((ty = d[Type]) == CHAR) ? LC : LI;
+      ty = d[Type];
+      
+      // Load value based on type:
+      // - CHAR: use LC (load char)
+      // - INT or pointers (including struct pointers): use LI (load int)
+      // - Struct values (not pointers): keep address, don't load
+      // 
+      // Type encoding: INT=1, PTR=2, struct pointer = StructID+PTR
+      // - (ty & 3) == 0 means either CHAR or StructID (aligned)
+      // - ty > PTR distinguishes StructID from CHAR
+      if (ty == CHAR) *++e = LC;
+      else if ((ty & 3) == 0 && ty > PTR) ; // Struct value, keep address
+      else *++e = LI; // INT, or any pointer (int*, char*, struct*)
     }
   }
   else if (tk == '(') {
@@ -192,7 +204,44 @@ void expr(int lev)
   }
   else if (tk == And) {
     next(); expr(Inc);
-    if (*e == LC || *e == LI) --e; else { printf("%d: bad address-of\n", line); exit(-1); }
+    if (*e == LC || *e == LI) --e;
+    // If it's a struct (LC/LI skipped), we accept it.
+    // How to distinguish? ty > PTR.
+    // Also need to check if result is an lvalue address.
+    // e would be LEA or IMM or ADD etc.
+    // c4 normally ONLY accepts lvalues which END with LC/LI.
+    // If we skip LC/LI, the last instruction is the address computation.
+    // So we just don't decrement e!
+    // But we need to ensure we don't error "bad address-of".
+    // So:
+    // if (*e == LC || *e == LI) --e;
+    // else if (ty > PTR && (ty & 3) == 0 && (*e == LEA || *e == IMM || *e == ADD || *e == ADJ)) ; // Accept address
+    // else error.
+    // Wait, `p` (pointer to struct) -> ty = StructID + PTR.
+    // `p` IS a pointer. `&p` is address of pointer.
+    // `p` logic emits `LI`. So `&p` works (remove `LI`, get `LEA location_of_p`).
+    // `Struct s`. `s`. logic emits LEA. No LI.
+    // `&s`. `expr` emits LEA.
+    // `&` sees LEA. `ty` is StructID.
+    // Correct.
+    // So:
+    else if (*(e-1) == LEA || *(e-1) == IMM || *(e-1) == ADJ || *e == ADD) {
+        // Only valid if it WAS a struct value that we declined to load.
+        // i.e. ty is StructID. (ty & 3) == 0 && ty > PTR.
+        // If ty is INT, and *e == LEA... it means we forgot to load?
+        // No, `expr` logic ensures INT is loaded.
+        // So this catch-all is only reachable for Structs!
+        // Wait, standard c4 logic errors if not LC/LI.
+        // So we just add check for struct type.
+        // Actually, if I just remove "else error", I accept ANY rvalue as address??
+        // `&(a+b)` -> `ADD` at end. `&` accepts it? NO. `&(a+b)` is invalid C.
+        // So we must restrict.
+        // If type is StructID, we accept non-load instructions because WE skipped the load.
+      if (ty > PTR && (ty & 3) == 0) ; // Accepted
+      else { printf("%d: bad address-of\n", line); exit(-1); }
+    }
+    else { printf("%d: bad address-of\n", line); exit(-1); }
+
     ty = ty + PTR;
   }
   else if (tk == '!') { next(); expr(Inc); *++e = PSH; *++e = IMM; *++e = 0; *++e = EQ; ty = INT; }
@@ -207,6 +256,7 @@ void expr(int lev)
     t = tk; next(); expr(Inc);
     if (*e == LC) { *e = PSH; *++e = LC; }
     else if (*e == LI) { *e = PSH; *++e = LI; }
+
     else { printf("%d: bad lvalue in pre-increment\n", line); exit(-1); }
     *++e = PSH;
     *++e = IMM; *++e = (ty > PTR) ? sizeof(int) : sizeof(char);
@@ -214,6 +264,86 @@ void expr(int lev)
     *++e = (ty == CHAR) ? SC : SI;
   }
   else { printf("%d: bad expression\n", line); exit(-1); }
+
+  while (tk == '[' || tk == '(' || tk == '.' || tk == Arrow) {
+    if (tk == '[') {
+      next();
+      if (*e == LC || *e == LI) *e = PSH; else { printf("%d: bad index\n", line); exit(-1); }
+      expr(Assign);
+      if (tk == ']') next(); else { printf("%d: close bracket expected\n", line); exit(-1); }
+      if (ty > INT) { ty = ty - PTR; *++e = IMM; *++e = sizeof(int); *++e = MUL;  }
+      else { printf("%d: bad pointer in index\n", line); exit(-1); }
+      *++e = ADD;
+      *++e = (ty == CHAR) ? LC : LI;
+    }
+    else if (tk == '.') {
+      next();
+      if ((ty & 3) == 0 && ty > PTR) ; // Struct Value. Address in Accumulator.
+      else if (*e == LC || *e == LI) *e = PSH; // Value in Accumulator? 
+      else { printf("%d: bad struct value\n", line); exit(-1); }
+
+      if (tk != Id) { printf("%d: bad struct member\n", line); exit(-1); }
+      
+      // Calculate member offset from struct metadata
+      // ty is StructID.
+      // We need to look up member in (int*)ty.
+      // But `c4` stores whole symbol entry as `StructID`.
+      // The symbol entry is `int *s`. `s[Sline]` points to member list.
+      // Member list is linked list of `int *m`.
+      // m[0]=Hash, m[1]=Type, m[2]=Offset, m[3]=NextMember.
+      
+      int *s = (int *)ty;
+      int *m = (int *)s[Sline];
+      while (m) {
+        if (m[0] == id[Hash]) { // Found member
+           // Add offset.
+           *++e = PSH; *++e = IMM; *++e = m[2]; *++e = ADD;
+           ty = m[1];
+           // If member is array/struct, keep address.
+           if (ty == CHAR) *++e = LC;
+           else if (ty == INT || (ty > PTR && (ty & 3))) *++e = LI;
+           // else Struct Value -> Keep Address.
+           break;
+        }
+        m = (int *)m[3];
+      }
+      if (!m) { printf("%d: member not found\n", line); exit(-1); }
+      next();
+    }
+    else if (tk == Arrow) {
+      next();
+      if (*e == LC || *e == LI) ; // Already loaded pointer.
+      else { printf("%d: bad struct pointer for arrow\n", line); exit(-1); }
+      // printf("ty=%d PTR=%d\n", ty, PTR);
+      if (ty > PTR && (ty & 3)) {
+        ty = ty - PTR;
+        while ((ty & 3) != 0) ty = ty - PTR; // remove all PTR layers
+      }
+      else { printf("%d: not a struct pointer\n", line); exit(-1); }
+      
+      if (tk != Id) { printf("%d: bad struct member\n", line); exit(-1); }
+      
+      int *s = (int *)ty;
+      int *m = (int *)s[Sline];
+      while (m) {
+        if (m[0] == id[Hash]) {
+           *++e = PSH; *++e = IMM; *++e = m[2]; *++e = ADD;
+           ty = m[1];
+           if (ty == CHAR) *++e = LC;
+           else if (ty == INT || (ty > PTR && (ty & 3))) *++e = LI;
+           break;
+        }
+        m = (int *)m[3];
+      }
+      if (!m) { printf("%d: member not found\n", line); exit(-1); }
+      next();
+    }
+    else if (tk == '(') { // Function call on function pointer? Not supported here?
+       // c4 supports direct calls. Wait. `funcptr()`
+       // TODO: Add support if needed. But for now struct is priority.
+       break; 
+    }
+  }
 
   while (tk >= lev) { // "precedence climbing" or "Top Down Operator Precedence" method
     t = ty;
@@ -280,6 +410,7 @@ void expr(int lev)
     else { printf("%d: compiler error tk=%d\n", line, tk); exit(-1); }
   }
 }
+
 
 void stmt()
 {
@@ -356,7 +487,7 @@ int main(int argc, char **argv)
   memset(e,    0, poolsz);
   memset(data, 0, poolsz);
 
-  p = "char else enum if int return sizeof while "
+  p = "char else enum if int return sizeof struct typedef union while "
       "open read close printf malloc free memset memcmp exit write system popen pclose fread void main";
   i = Char; while (i <= While) { next(); id[Tk] = i++; } // add keywords to symbol table
   i = OPEN; while (i <= FRED) { next(); id[Class] = Sys; id[Type] = INT; id[Val] = i++; } // add library to symbol table
@@ -396,6 +527,65 @@ int main(int argc, char **argv)
         next();
       }
     }
+
+    else if (tk == Struct) {
+      next();
+      if (tk != '{') {
+        int *s = id;
+        next();
+        if (id[Class] == Struct) bt = id[Type];
+        
+        // Restore id if we are defining it now
+        if (tk == '{') id = s;
+      }
+      if (tk == '{') {
+        int *s = id; 
+        s[Class] = Struct; 
+        s[Type] = (int)s; 
+        s[Sline] = 0; 
+        
+        next();
+        i = 0; 
+        while (tk != '}') {
+          bt = INT;
+          if (tk == Int) next();
+          else if (tk == Char) { next(); bt = CHAR; }
+          else if (tk == Struct) {
+             next();
+             if (tk == '{') { printf("%d: nested structs not supported\n", line); return -1; }
+             if (id[Class] == Struct) bt = id[Type];
+             else { printf("%d: bad struct declaration\n", line); return -1; }
+             next();
+          }
+          while (tk != ';') {
+            ty = bt;
+            while (tk == Mul) { next(); ty = ty + PTR; }
+            if (tk != Id) { printf("%d: bad struct member declaration\n", line); return -1; }
+            if (id[Class] == Loc) { printf("%d: duplicate struct member definition\n", line); return -1; }
+            
+            int *m = malloc(4 * sizeof(int));
+            if (!m) { printf("%d: could not malloc member\n", line); return -1; }
+            m[0] = id[Hash]; 
+            m[1] = ty;       
+            m[2] = i;        
+            m[3] = s[Sline]; 
+            s[Sline] = (int)m; 
+            
+            if (ty == CHAR) i = i + sizeof(char);
+            else if (ty == INT) i = i + sizeof(int);
+            else if (ty >= PTR && (ty & 3) != 0) i = i + sizeof(int); // Pointer
+            else i = i + ((int *)ty)[Val]; // Struct Value
+ 
+            next();
+            if (tk == ',') next();
+          }
+          next();
+        }
+        s[Val] = i; 
+        next();
+      }
+    }
+
     while (tk != ';' && tk != '}') {
       ty = bt;
       while (tk == Mul) { next(); ty = ty + PTR; }
@@ -424,9 +614,20 @@ int main(int argc, char **argv)
         if (tk != '{') { printf("%d: bad function definition\n", line); return -1; }
         loc = ++i;
         next();
-        while (tk == Int || tk == Char) {
-          bt = (tk == Int) ? INT : CHAR;
-          next();
+        while (tk == Int || tk == Char || tk == Struct) {
+          if (tk == Struct) {
+            next();
+            if (tk != Id) { printf("%d: bad struct declaration\n", line); return -1; }
+            if (id[Class] == Struct) {
+              bt = id[Type]; // copy the Struct ID (address of symbol)
+            } else {
+              printf("%d: %s not a struct\n", line, (char *)id[Name]); return -1;
+            }
+            next();
+          } else {
+            bt = (tk == Int) ? INT : CHAR;
+            next();
+          }
           while (tk != ';') {
             ty = bt;
             while (tk == Mul) { next(); ty = ty + PTR; }
