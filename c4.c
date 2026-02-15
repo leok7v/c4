@@ -135,7 +135,7 @@ void next()
 
 void expr(int64_t lev)
 {
-  int64_t t, *d, is_struct_value, is_struct_val, base_ty, elem_ty, *s, *m;
+  int64_t t, *d, is_struct_value, is_struct_val, base_ty, elem_ty, *s, *m, i;
 
   if (!tk) { printf("%d: unexpected eof in expression\n", (int)line); exit(-1); }
   else if (tk == Num) { *++e = IMM; *++e = ival; next(); ty = INT64; }
@@ -196,9 +196,17 @@ void expr(int64_t lev)
       // Pointers are: base_type + n*PTR where base_type < PTR
       // Struct pointers are: struct_id + n*PTR
       // To detect struct value: strip PTR layers and see if we're left with a large value
-      base_ty = ty;
-      while (base_ty >= PTR) base_ty = base_ty - PTR;
-      is_struct_value = (ty > 100) && (base_ty == ty);
+      // For very large values (StructIDs which are symbol table addresses),
+      // use alignment to distinguish: StructIDs are 8-byte aligned, StructID+PTR is not
+      if (ty >= 10000) {
+        // Large value - check alignment
+        is_struct_value = ((ty & 7) == 0);
+      } else {
+        // Small value - strip PTR layers normally
+        base_ty = ty;
+        while (base_ty >= PTR) base_ty = base_ty - PTR;
+        is_struct_value = (ty > 100) && (base_ty == ty);
+      }
       
       if (ty == CHAR) *++e = LC;
       else if (ty == INT32) *++e = LI32;
@@ -256,11 +264,16 @@ void expr(int64_t lev)
     // So:
     else if (*(e-1) == LEA || *(e-1) == IMM || *(e-1) == ADJ || *e == ADD) {
         // Only valid if it WAS a struct value that we declined to load.
-        // Check if ty is a struct ID by stripping PTR layers
-      base_ty = ty;
-      while (base_ty >= PTR) base_ty = base_ty - PTR;
-      if (ty > 100 && base_ty == ty) ; // Struct value - accepted
-      else { printf("%d: bad address-of\n", (int)line); exit(-1); }
+      // Check if ty is a struct value using alignment for large values
+      if (ty >= 10000) {
+        if ((ty & 7) == 0) ; // Struct value - accepted
+        else { printf("%d: bad address-of\n", (int)line); exit(-1); }
+      } else {
+        base_ty = ty;
+        while (base_ty >= PTR) base_ty = base_ty - PTR;
+        if (ty > 100 && base_ty == ty) ; // Struct value - accepted
+        else { printf("%d: bad address-of\n", (int)line); exit(-1); }
+      }
     }
     else { printf("%d: bad address-of\n", (int)line); exit(-1); }
 
@@ -323,11 +336,16 @@ void expr(int64_t lev)
     }
     else if (tk == '.') {
       next();
-      base_ty = ty;
-      while (base_ty >= PTR) base_ty = base_ty - PTR;
-      is_struct_val = (ty > 100) && (base_ty == ty);
+      // Detect struct value: for large values use alignment, for small values strip PTR
+      if (ty >= 10000) {
+        is_struct_val = ((ty & 7) == 0);
+      } else {
+        base_ty = ty;
+        while (base_ty >= PTR) base_ty = base_ty - PTR;
+        is_struct_val = (ty > 100) && (base_ty == ty);
+      }
       if (is_struct_val) ; // Struct Value. Address in Accumulator.
-      else if (*e == LC || *e == LI32 || *e == LI) *e = PSH; // Value in Accumulator? 
+      else if (*e == LC || *e == LI32 || *e == LI) *e = PSH; // Value in Accumulator?
       else { printf("%d: bad struct value\n", (int)line); exit(-1); }
 
       if (tk != Id) { printf("%d: bad struct member\n", (int)line); exit(-1); }
@@ -352,7 +370,12 @@ void expr(int64_t lev)
            else if (ty == INT64) *++e = LI;
            else {
              elem_ty = ty;
-             while (elem_ty >= PTR) elem_ty = elem_ty - PTR;
+             i = 0;
+             while (elem_ty >= PTR && i < 100) {
+               elem_ty = elem_ty - PTR;
+               i = i + 1;
+             }
+             if (i >= 100) elem_ty = ty;
              if (elem_ty != ty) *++e = LI;
            }
            t = 1;
@@ -371,9 +394,14 @@ void expr(int64_t lev)
       // printf("ty=%d PTR=%d\n", ty, PTR);
       if (ty > PTR) {
         ty = ty - PTR;
-        base_ty = ty;
-        while (base_ty >= PTR) base_ty = base_ty - PTR;
-        if (base_ty == ty || ty <= PTR) { printf("%d: not a struct pointer\n", (int)line); exit(-1); }
+        // Check if dereferenced type is a struct value (should not be for arrow operator)
+        if (ty >= 10000) {
+          if ((ty & 7) == 0) { printf("%d: not a struct pointer\n", (int)line); exit(-1); }
+        } else {
+          base_ty = ty;
+          while (base_ty >= PTR) base_ty = base_ty - PTR;
+          if (base_ty == ty || ty <= PTR) { printf("%d: not a struct pointer\n", (int)line); exit(-1); }
+        }
       }
       else { printf("%d: not a struct pointer\n", (int)line); exit(-1); }
 
@@ -392,7 +420,12 @@ void expr(int64_t lev)
            else if (ty == INT64) *++e = LI;
            else {
              elem_ty = ty;
-             while (elem_ty >= PTR) elem_ty = elem_ty - PTR;
+             i = 0;
+             while (elem_ty >= PTR && i < 100) {
+               elem_ty = elem_ty - PTR;
+               i = i + 1;
+             }
+             if (i >= 100) elem_ty = ty;
              if (elem_ty != ty) *++e = LI;
            }
            t = 1;
@@ -410,7 +443,7 @@ void expr(int64_t lev)
     t = ty;
     if (tk == Assign) {
       next();
-      if (*e == LC || *e == LI32 || *e == LI) *e = PSH; 
+      if (*e == LC || *e == LI32 || *e == LI) *e = PSH;
       else { printf("%d: bad lvalue in assignment\n", (int)line); exit(-1); }
       expr(Assign); 
       if ((ty = t) == CHAR) *++e = SC;
@@ -695,10 +728,16 @@ int main(int argc, char **argv)
             else if (ty == INT32) i = i + 4;
             else if (ty == INT64) i = i + sizeof(int64_t);
             else {
-              base_ty = ty;
-              while (base_ty >= PTR) base_ty = base_ty - PTR;
-              if (base_ty != ty) i = i + sizeof(int64_t); // Pointer
-              else i = i + ((int64_t *)ty)[Val]; // Struct value
+              // Check if ty is a pointer or struct value
+              if (ty >= 10000) {
+                if ((ty & 7) == 0) i = i + ((int64_t *)ty)[Val]; // Struct value
+                else i = i + sizeof(int64_t); // Pointer
+              } else {
+                base_ty = ty;
+                while (base_ty >= PTR) base_ty = base_ty - PTR;
+                if (base_ty != ty) i = i + sizeof(int64_t); // Pointer
+                else i = i + ((int64_t *)ty)[Val]; // Struct value
+              }
             }
  
             next();
