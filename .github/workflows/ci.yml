@@ -14,7 +14,12 @@ jobs:
     - uses: actions/checkout@v3
     
     - name: Setup build directory
-      run: mkdir -p build
+      run: |
+        pwd
+        ls -la
+        mkdir -p build
+        ls -la build
+        echo "Build directory created"
     
     - name: Build c4 compiler
       run: gcc -o c4 c4.c -O3 -m64 -std=c11 -Wall
@@ -30,10 +35,13 @@ jobs:
     
     - name: Run basic tests
       run: |
+        pwd
+        ls -la build/
         echo "=== Testing args.c ==="
         ./c4 test/args.c
         echo "=== Testing io.c ==="
         ./c4 test/io.c
+        ls -la build/
     
     - name: Test self-compilation
       run: |
