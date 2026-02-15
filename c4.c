@@ -11,12 +11,12 @@
 #include <memory.h>
 #include <unistd.h>
 #include <fcntl.h>
-#define int long long
+#include <stdint.h>
 
 char *p, *lp, // current position in source code
      *data;   // data/bss pointer
 
-int *e, *le,  // current position in emitted code
+int64_t *e, *le,  // current position in emitted code
     *id,      // currently parsed identifier
     *sym,     // symbol table (simple list of identifiers)
     tk,       // current token
@@ -30,17 +30,17 @@ int *e, *le,  // current position in emitted code
 // tokens and classes (operators last and in precedence order)
 enum {
   Num = 128, Fun, Sys, Glo, Loc, Id,
-  Char, Else, Enum, If, Int, Return, Sizeof, Struct, Typedef, Union, While,
+  Char, Else, Enum, If, Int, Int32_t, Int64_t, Return, Sizeof, Struct, Typedef, Union, While,
   Assign, Cond, Lor, Lan, Or, Xor, And, Eq, Ne, Lt, Gt, Le, Ge, Shl, Shr, Add, Sub, Mul, Div, Mod, Inc, Dec, Brak, Arrow
 };
 
 // opcodes
-enum { LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,
+enum { LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,LI32,SI  ,SC  ,SI32,PSH ,
        OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,
        OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,EXIT,WRIT,SYST,POPN,PCLS,FRED };
 
 // types
-enum { CHAR, INT, PTR };
+enum { CHAR, INT32, INT64, PTR };
 
 // identifier offsets (since we can't create an ident struct)
 enum { Tk, Hash, Name, Class, Type, Val, HClass, HType, HVal, Utyedef, Extent, Sline, Idsz };
@@ -56,7 +56,7 @@ void next()
         printf("%d: %.*s", line, p - lp, lp);
         lp = p;
         while (le < e) {
-          printf("%8.4s", &"LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,"
+          printf("%8.4s", &"LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,LI32,SI  ,SC  ,SI32,PSH ,"
                            "OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,"
                            "OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,EXIT,WRIT,SYST,POPN,PCLS,FRED,"[*++le * 5]);
           if (*le <= ADJ) printf(" %d\n", *++le); else printf("\n");
@@ -77,7 +77,7 @@ void next()
         if (tk == id[Hash] && !memcmp((char *)id[Name], pp, p - pp)) { tk = id[Tk]; return; }
         id = id + Idsz;
       }
-      id[Name] = (int)pp;
+      id[Name] = (int64_t)pp;
       id[Hash] = tk;
       tk = id[Tk] = Id;
       return;
@@ -111,7 +111,7 @@ void next()
         if (tk == '"') *data++ = ival;
       }
       ++p;
-      if (tk == '"') ival = (int)pp; else tk = Num;
+      if (tk == '"') ival = (int64_t)pp; else tk = Num;
       return;
     }
     else if (tk == '=') { if (*p == '=') { ++p; tk = Eq; } else tk = Assign; return; }
@@ -131,24 +131,31 @@ void next()
   }
 }
 
-void expr(int lev)
+void expr(int64_t lev)
 {
-  int t, *d;
+  int64_t t, *d, is_struct_value, is_struct_val, base_ty, elem_ty, *s, *m;
 
   if (!tk) { printf("%d: unexpected eof in expression\n", line); exit(-1); }
-  else if (tk == Num) { *++e = IMM; *++e = ival; next(); ty = INT; }
+  else if (tk == Num) { *++e = IMM; *++e = ival; next(); ty = INT64; }
   else if (tk == '"') {
     *++e = IMM; *++e = ival; next();
     while (tk == '"') next();
-    data = (char *)((int)data + sizeof(int) & -sizeof(int)); ty = PTR;
+    data = (char *)((int64_t)data + sizeof(int64_t) & -sizeof(int64_t)); ty = PTR;
   }
   else if (tk == Sizeof) {
     next(); if (tk == '(') next(); else { printf("%d: open paren expected in sizeof\n", line); exit(-1); }
-    ty = INT; if (tk == Int) next(); else if (tk == Char) { next(); ty = CHAR; }
+    ty = INT64; 
+    if (tk == Int) next(); 
+    else if (tk == Int32_t) { next(); ty = INT32; }
+    else if (tk == Int64_t) { next(); ty = INT64; }
+    else if (tk == Char) { next(); ty = CHAR; }
     while (tk == Mul) { next(); ty = ty + PTR; }
     if (tk == ')') next(); else { printf("%d: close paren expected in sizeof\n", line); exit(-1); }
-    *++e = IMM; *++e = (ty == CHAR) ? sizeof(char) : sizeof(int);
-    ty = INT;
+    *++e = IMM;
+    if (ty == CHAR) *++e = sizeof(char);
+    else if (ty == INT32) *++e = 4;
+    else *++e = sizeof(int64_t); // INT64 and pointers
+    ty = INT64;
   }
   else if (tk == Id) {
     d = id; next();
@@ -163,7 +170,7 @@ void expr(int lev)
       if (t) { *++e = ADJ; *++e = t; }
       ty = d[Type];
     }
-    else if (d[Class] == Num) { *++e = IMM; *++e = d[Val]; ty = INT; }
+    else if (d[Class] == Num) { *++e = IMM; *++e = d[Val]; ty = INT64; }
     else {
       if (d[Class] == Loc) { *++e = LEA; *++e = loc - d[Val]; }
       else if (d[Class] == Glo) { *++e = IMM; *++e = d[Val]; }
@@ -172,21 +179,39 @@ void expr(int lev)
       
       // Load value based on type:
       // - CHAR: use LC (load char)
-      // - INT or pointers (including struct pointers): use LI (load int)
+      // - INT32: use LI32 (load 32-bit int)
+      // - INT64 or pointers: use LI (load 64-bit)
       // - Struct values (not pointers): keep address, don't load
       // 
-      // Type encoding: INT=1, PTR=2, struct pointer = StructID+PTR
-      // - (ty & 3) == 0 means either CHAR or StructID (aligned)
-      // - ty > PTR distinguishes StructID from CHAR
+      // Type encoding:
+      //   CHAR=0, INT32=1, INT64=2, PTR=3
+      //   Pointers: base_type + PTR (e.g., int32_t* = 4, int32_t** = 7, int64_t* = 5)
+      //   Struct IDs are large addresses (symbol table pointers, > 1000)
+      //   Struct pointers: StructID + PTR, StructID + PTR + PTR, etc.
+      //
+      // Struct value detection: check if ty is a struct ID (not a pointer)
+      // Struct IDs are symbol table addresses (large values > 100)
+      // Pointers are: base_type + n*PTR where base_type < PTR
+      // Struct pointers are: struct_id + n*PTR
+      // To detect struct value: strip PTR layers and see if we're left with a large value
+      base_ty = ty;
+      while (base_ty >= PTR) base_ty = base_ty - PTR;
+      is_struct_value = (ty > 100) && (base_ty == ty);
+      
       if (ty == CHAR) *++e = LC;
-      else if ((ty & 3) == 0 && ty > PTR) ; // Struct value, keep address
-      else *++e = LI; // INT, or any pointer (int*, char*, struct*)
+      else if (ty == INT32) *++e = LI32;
+      else if (is_struct_value) ; // Struct value, keep address
+      else *++e = LI; // INT64, pointers, or struct pointers
     }
   }
   else if (tk == '(') {
     next();
-    if (tk == Int || tk == Char) {
-      t = (tk == Int) ? INT : CHAR; next();
+    if (tk == Int || tk == Int32_t || tk == Int64_t || tk == Char) {
+      t = INT64;
+      if (tk == Int) next();
+      else if (tk == Int32_t) { next(); t = INT32; }
+      else if (tk == Int64_t) { next(); t = INT64; }
+      else if (tk == Char) { next(); t = CHAR; }
       while (tk == Mul) { next(); t = t + PTR; }
       if (tk == ')') next(); else { printf("%d: bad cast\n", line); exit(-1); }
       expr(Inc);
@@ -199,12 +224,14 @@ void expr(int lev)
   }
   else if (tk == Mul) {
     next(); expr(Inc);
-    if (ty > INT) ty = ty - PTR; else { printf("%d: bad dereference\n", line); exit(-1); }
-    *++e = (ty == CHAR) ? LC : LI;
+    if (ty > INT64) ty = ty - PTR; else { printf("%d: bad dereference\n", line); exit(-1); }
+    if (ty == CHAR) *++e = LC;
+    else if (ty == INT32) *++e = LI32;
+    else *++e = LI;
   }
   else if (tk == And) {
     next(); expr(Inc);
-    if (*e == LC || *e == LI) --e;
+    if (*e == LC || *e == LI32 || *e == LI) --e;
     // If it's a struct (LC/LI skipped), we accept it.
     // How to distinguish? ty > PTR.
     // Also need to check if result is an lvalue address.
@@ -227,59 +254,78 @@ void expr(int lev)
     // So:
     else if (*(e-1) == LEA || *(e-1) == IMM || *(e-1) == ADJ || *e == ADD) {
         // Only valid if it WAS a struct value that we declined to load.
-        // i.e. ty is StructID. (ty & 3) == 0 && ty > PTR.
-        // If ty is INT, and *e == LEA... it means we forgot to load?
-        // No, `expr` logic ensures INT is loaded.
-        // So this catch-all is only reachable for Structs!
-        // Wait, standard c4 logic errors if not LC/LI.
-        // So we just add check for struct type.
-        // Actually, if I just remove "else error", I accept ANY rvalue as address??
-        // `&(a+b)` -> `ADD` at end. `&` accepts it? NO. `&(a+b)` is invalid C.
-        // So we must restrict.
-        // If type is StructID, we accept non-load instructions because WE skipped the load.
-      if (ty > PTR && (ty & 3) == 0) ; // Accepted
+        // Check if ty is a struct ID by stripping PTR layers
+      base_ty = ty;
+      while (base_ty >= PTR) base_ty = base_ty - PTR;
+      if (ty > 100 && base_ty == ty) ; // Struct value - accepted
       else { printf("%d: bad address-of\n", line); exit(-1); }
     }
     else { printf("%d: bad address-of\n", line); exit(-1); }
 
     ty = ty + PTR;
   }
-  else if (tk == '!') { next(); expr(Inc); *++e = PSH; *++e = IMM; *++e = 0; *++e = EQ; ty = INT; }
-  else if (tk == '~') { next(); expr(Inc); *++e = PSH; *++e = IMM; *++e = -1; *++e = XOR; ty = INT; }
-  else if (tk == Add) { next(); expr(Inc); ty = INT; }
+  else if (tk == '!') { next(); expr(Inc); *++e = PSH; *++e = IMM; *++e = 0; *++e = EQ; ty = INT64; }
+  else if (tk == '~') { next(); expr(Inc); *++e = PSH; *++e = IMM; *++e = -1; *++e = XOR; ty = INT64; }
+  else if (tk == Add) { next(); expr(Inc); ty = INT64; }
   else if (tk == Sub) {
     next(); *++e = IMM;
     if (tk == Num) { *++e = -ival; next(); } else { *++e = -1; *++e = PSH; expr(Inc); *++e = MUL; }
-    ty = INT;
+    ty = INT64;
   }
   else if (tk == Inc || tk == Dec) {
     t = tk; next(); expr(Inc);
     if (*e == LC) { *e = PSH; *++e = LC; }
+    else if (*e == LI32) { *e = PSH; *++e = LI32; }
     else if (*e == LI) { *e = PSH; *++e = LI; }
-
     else { printf("%d: bad lvalue in pre-increment\n", line); exit(-1); }
     *++e = PSH;
-    *++e = IMM; *++e = (ty > PTR) ? sizeof(int) : sizeof(char);
+    *++e = IMM;
+    // For pointers, add/sub the size of pointed-to type
+    // For scalars (CHAR, INT32, INT64), add/sub 1
+    if (ty > PTR) {
+      base_ty = ty - PTR;
+      while (base_ty > PTR) base_ty = base_ty - PTR; // Remove all PTR layers
+      if (base_ty == CHAR) *++e = sizeof(char);
+      else if (base_ty == INT32) *++e = 4;
+      else *++e = sizeof(int64_t); // INT64
+    } else {
+      *++e = 1; // Scalar increment is always 1
+    }
     *++e = (t == Inc) ? ADD : SUB;
-    *++e = (ty == CHAR) ? SC : SI;
+    if (ty == CHAR) *++e = SC;
+    else if (ty == INT32) *++e = SI32;
+    else *++e = SI;
   }
   else { printf("%d: bad expression\n", line); exit(-1); }
 
-  while (tk == '[' || tk == '(' || tk == '.' || tk == Arrow) {
+  while (tk == '[' || tk == '.' || tk == Arrow) {
     if (tk == '[') {
       next();
-      if (*e == LC || *e == LI) *e = PSH; else { printf("%d: bad index\n", line); exit(-1); }
+      if (*e == LC || *e == LI32 || *e == LI) *e = PSH; else { printf("%d: bad index\n", line); exit(-1); }
       expr(Assign);
       if (tk == ']') next(); else { printf("%d: close bracket expected\n", line); exit(-1); }
-      if (ty > INT) { ty = ty - PTR; *++e = IMM; *++e = sizeof(int); *++e = MUL;  }
+      if (ty > INT64) {
+        ty = ty - PTR;
+        *++e = IMM;
+        // Calculate element size
+        if (ty == CHAR) *++e = sizeof(char);
+        else if (ty == INT32) *++e = 4;
+        else *++e = sizeof(int64_t); // INT64 or pointers
+        *++e = MUL;
+      }
       else { printf("%d: bad pointer in index\n", line); exit(-1); }
       *++e = ADD;
-      *++e = (ty == CHAR) ? LC : LI;
+      if (ty == CHAR) *++e = LC;
+      else if (ty == INT32) *++e = LI32;
+      else *++e = LI;
     }
     else if (tk == '.') {
       next();
-      if ((ty & 3) == 0 && ty > PTR) ; // Struct Value. Address in Accumulator.
-      else if (*e == LC || *e == LI) *e = PSH; // Value in Accumulator? 
+      base_ty = ty;
+      while (base_ty >= PTR) base_ty = base_ty - PTR;
+      is_struct_val = (ty > 100) && (base_ty == ty);
+      if (is_struct_val) ; // Struct Value. Address in Accumulator.
+      else if (*e == LC || *e == LI32 || *e == LI) *e = PSH; // Value in Accumulator? 
       else { printf("%d: bad struct value\n", line); exit(-1); }
 
       if (tk != Id) { printf("%d: bad struct member\n", line); exit(-1); }
@@ -291,57 +337,70 @@ void expr(int lev)
       // The symbol entry is `int *s`. `s[Sline]` points to member list.
       // Member list is linked list of `int *m`.
       // m[0]=Hash, m[1]=Type, m[2]=Offset, m[3]=NextMember.
-      
-      int *s = (int *)ty;
-      int *m = (int *)s[Sline];
-      while (m) {
-        if (m[0] == id[Hash]) { // Found member
-           // Add offset.
-           *++e = PSH; *++e = IMM; *++e = m[2]; *++e = ADD;
-           ty = m[1];
-           // If member is array/struct, keep address.
-           if (ty == CHAR) *++e = LC;
-           else if (ty == INT || (ty > PTR && (ty & 3))) *++e = LI;
-           // else Struct Value -> Keep Address.
-           break;
-        }
-        m = (int *)m[3];
-      }
-      if (!m) { printf("%d: member not found\n", line); exit(-1); }
-      next();
-    }
-    else if (tk == Arrow) {
-      next();
-      if (*e == LC || *e == LI) ; // Already loaded pointer.
-      else { printf("%d: bad struct pointer for arrow\n", line); exit(-1); }
-      // printf("ty=%d PTR=%d\n", ty, PTR);
-      if (ty > PTR && (ty & 3)) {
-        ty = ty - PTR;
-        while ((ty & 3) != 0) ty = ty - PTR; // remove all PTR layers
-      }
-      else { printf("%d: not a struct pointer\n", line); exit(-1); }
-      
-      if (tk != Id) { printf("%d: bad struct member\n", line); exit(-1); }
-      
-      int *s = (int *)ty;
-      int *m = (int *)s[Sline];
-      while (m) {
+
+      s = (int64_t *)ty;
+      m = (int64_t *)s[Sline];
+      t = 0;
+      while (m && !t) {
         if (m[0] == id[Hash]) {
            *++e = PSH; *++e = IMM; *++e = m[2]; *++e = ADD;
            ty = m[1];
            if (ty == CHAR) *++e = LC;
-           else if (ty == INT || (ty > PTR && (ty & 3))) *++e = LI;
-           break;
+           else if (ty == INT32) *++e = LI32;
+           else if (ty == INT64) *++e = LI;
+           else {
+             elem_ty = ty;
+             while (elem_ty >= PTR) elem_ty = elem_ty - PTR;
+             if (elem_ty != ty) *++e = LI;
+           }
+           t = 1;
         }
-        m = (int *)m[3];
+        else {
+          m = (int64_t *)m[3];
+        }
       }
-      if (!m) { printf("%d: member not found\n", line); exit(-1); }
+      if (!t) { printf("%d: member not found\n", line); exit(-1); }
       next();
     }
-    else if (tk == '(') { // Function call on function pointer? Not supported here?
-       // c4 supports direct calls. Wait. `funcptr()`
-       // TODO: Add support if needed. But for now struct is priority.
-       break; 
+    else if (tk == Arrow) {
+      next();
+      if (*e == LC || *e == LI32 || *e == LI) ; // Already loaded pointer.
+      else { printf("%d: bad struct pointer for arrow\n", line); exit(-1); }
+      // printf("ty=%d PTR=%d\n", ty, PTR);
+      if (ty > PTR) {
+        ty = ty - PTR;
+        base_ty = ty;
+        while (base_ty >= PTR) base_ty = base_ty - PTR;
+        if (base_ty == ty || ty <= PTR) { printf("%d: not a struct pointer\n", line); exit(-1); }
+      }
+      else { printf("%d: not a struct pointer\n", line); exit(-1); }
+
+
+      if (tk != Id) { printf("%d: bad struct member\n", line); exit(-1); }
+
+      s = (int64_t *)ty;
+      m = (int64_t *)s[Sline];
+      t = 0;
+      while (m && !t) {
+        if (m[0] == id[Hash]) {
+           *++e = PSH; *++e = IMM; *++e = m[2]; *++e = ADD;
+           ty = m[1];
+           if (ty == CHAR) *++e = LC;
+           else if (ty == INT32) *++e = LI32;
+           else if (ty == INT64) *++e = LI;
+           else {
+             elem_ty = ty;
+             while (elem_ty >= PTR) elem_ty = elem_ty - PTR;
+             if (elem_ty != ty) *++e = LI;
+           }
+           t = 1;
+        }
+        else {
+          m = (int64_t *)m[3];
+        }
+      }
+      if (!t) { printf("%d: member not found\n", line); exit(-1); }
+      next();
     }
   }
 
@@ -349,60 +408,117 @@ void expr(int lev)
     t = ty;
     if (tk == Assign) {
       next();
-      if (*e == LC || *e == LI) *e = PSH; else { printf("%d: bad lvalue in assignment\n", line); exit(-1); }
-      expr(Assign); *++e = ((ty = t) == CHAR) ? SC : SI;
+      if (*e == LC || *e == LI32 || *e == LI) *e = PSH; 
+      else { printf("%d: bad lvalue in assignment\n", line); exit(-1); }
+      expr(Assign); 
+      if ((ty = t) == CHAR) *++e = SC;
+      else if (ty == INT32) *++e = SI32;
+      else *++e = SI;
     }
     else if (tk == Cond) {
       next();
       *++e = BZ; d = ++e;
       expr(Assign);
       if (tk == ':') next(); else { printf("%d: conditional missing colon\n", line); exit(-1); }
-      *d = (int)(e + 3); *++e = JMP; d = ++e;
+      *d = (int64_t)(e + 3); *++e = JMP; d = ++e;
       expr(Cond);
-      *d = (int)(e + 1);
+      *d = (int64_t)(e + 1);
     }
-    else if (tk == Lor) { next(); *++e = BNZ; d = ++e; expr(Lan); *d = (int)(e + 1); ty = INT; }
-    else if (tk == Lan) { next(); *++e = BZ;  d = ++e; expr(Or);  *d = (int)(e + 1); ty = INT; }
-    else if (tk == Or)  { next(); *++e = PSH; expr(Xor); *++e = OR;  ty = INT; }
-    else if (tk == Xor) { next(); *++e = PSH; expr(And); *++e = XOR; ty = INT; }
-    else if (tk == And) { next(); *++e = PSH; expr(Eq);  *++e = AND; ty = INT; }
-    else if (tk == Eq)  { next(); *++e = PSH; expr(Lt);  *++e = EQ;  ty = INT; }
-    else if (tk == Ne)  { next(); *++e = PSH; expr(Lt);  *++e = NE;  ty = INT; }
-    else if (tk == Lt)  { next(); *++e = PSH; expr(Shl); *++e = LT;  ty = INT; }
-    else if (tk == Gt)  { next(); *++e = PSH; expr(Shl); *++e = GT;  ty = INT; }
-    else if (tk == Le)  { next(); *++e = PSH; expr(Shl); *++e = LE;  ty = INT; }
-    else if (tk == Ge)  { next(); *++e = PSH; expr(Shl); *++e = GE;  ty = INT; }
-    else if (tk == Shl) { next(); *++e = PSH; expr(Add); *++e = SHL; ty = INT; }
-    else if (tk == Shr) { next(); *++e = PSH; expr(Add); *++e = SHR; ty = INT; }
+    else if (tk == Lor) { next(); *++e = BNZ; d = ++e; expr(Lan); *d = (int64_t)(e + 1); ty = INT64; }
+    else if (tk == Lan) { next(); *++e = BZ;  d = ++e; expr(Or);  *d = (int64_t)(e + 1); ty = INT64; }
+    else if (tk == Or)  { next(); *++e = PSH; expr(Xor); *++e = OR;  ty = INT64; }
+    else if (tk == Xor) { next(); *++e = PSH; expr(And); *++e = XOR; ty = INT64; }
+    else if (tk == And) { next(); *++e = PSH; expr(Eq);  *++e = AND; ty = INT64; }
+    else if (tk == Eq)  { next(); *++e = PSH; expr(Lt);  *++e = EQ;  ty = INT64; }
+    else if (tk == Ne)  { next(); *++e = PSH; expr(Lt);  *++e = NE;  ty = INT64; }
+    else if (tk == Lt)  { next(); *++e = PSH; expr(Shl); *++e = LT;  ty = INT64; }
+    else if (tk == Gt)  { next(); *++e = PSH; expr(Shl); *++e = GT;  ty = INT64; }
+    else if (tk == Le)  { next(); *++e = PSH; expr(Shl); *++e = LE;  ty = INT64; }
+    else if (tk == Ge)  { next(); *++e = PSH; expr(Shl); *++e = GE;  ty = INT64; }
+    else if (tk == Shl) { next(); *++e = PSH; expr(Add); *++e = SHL; ty = INT64; }
+    else if (tk == Shr) { next(); *++e = PSH; expr(Add); *++e = SHR; ty = INT64; }
     else if (tk == Add) {
       next(); *++e = PSH; expr(Mul);
-      if ((ty = t) > PTR) { *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = MUL;  }
+      if ((ty = t) > PTR) {
+        *++e = PSH; *++e = IMM;
+        ty = ty - PTR; // Get element type
+        if (ty == CHAR) *++e = sizeof(char);
+        else if (ty == INT32) *++e = 4;
+        else *++e = sizeof(int64_t); // INT64 or pointers
+        *++e = MUL;
+        ty = t; // Restore pointer type
+      }
       *++e = ADD;
     }
     else if (tk == Sub) {
       next(); *++e = PSH; expr(Mul);
-      if (t > PTR && t == ty) { *++e = SUB; *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = DIV; ty = INT; }
-      else if ((ty = t) > PTR) { *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = MUL; *++e = SUB; }
+      if (t > PTR && t == ty) {
+        *++e = SUB; *++e = PSH; *++e = IMM;
+        elem_ty = t - PTR;
+        if (elem_ty == CHAR) *++e = sizeof(char);
+        else if (elem_ty == INT32) *++e = 4;
+        else *++e = sizeof(int64_t);
+        *++e = DIV; ty = INT64;
+      }
+      else if ((ty = t) > PTR) {
+        *++e = PSH; *++e = IMM;
+        ty = ty - PTR;
+        if (ty == CHAR) *++e = sizeof(char);
+        else if (ty == INT32) *++e = 4;
+        else *++e = sizeof(int64_t);
+        *++e = MUL; *++e = SUB;
+        ty = t;
+      }
       else *++e = SUB;
     }
-    else if (tk == Mul) { next(); *++e = PSH; expr(Inc); *++e = MUL; ty = INT; }
-    else if (tk == Div) { next(); *++e = PSH; expr(Inc); *++e = DIV; ty = INT; }
-    else if (tk == Mod) { next(); *++e = PSH; expr(Inc); *++e = MOD; ty = INT; }
+    else if (tk == Mul) { next(); *++e = PSH; expr(Inc); *++e = MUL; ty = INT64; }
+    else if (tk == Div) { next(); *++e = PSH; expr(Inc); *++e = DIV; ty = INT64; }
+    else if (tk == Mod) { next(); *++e = PSH; expr(Inc); *++e = MOD; ty = INT64; }
     else if (tk == Inc || tk == Dec) {
       if (*e == LC) { *e = PSH; *++e = LC; }
+      else if (*e == LI32) { *e = PSH; *++e = LI32; }
       else if (*e == LI) { *e = PSH; *++e = LI; }
       else { printf("%d: bad lvalue in post-increment\n", line); exit(-1); }
-      *++e = PSH; *++e = IMM; *++e = (ty > PTR) ? sizeof(int) : sizeof(char);
+      *++e = PSH; *++e = IMM;
+      // For pointers, add/sub the size of pointed-to type
+      // For scalars (CHAR, INT32, INT64), add/sub 1
+      if (ty > PTR) {
+        base_ty = ty - PTR;
+        while (base_ty > PTR) base_ty = base_ty - PTR; // Remove all PTR layers
+        if (base_ty == CHAR) *++e = sizeof(char);
+        else if (base_ty == INT32) *++e = 4;
+        else *++e = sizeof(int64_t); // INT64
+      } else {
+        *++e = 1; // Scalar increment is always 1
+      }
       *++e = (tk == Inc) ? ADD : SUB;
-      *++e = (ty == CHAR) ? SC : SI;
-      *++e = PSH; *++e = IMM; *++e = (ty > PTR) ? sizeof(int) : sizeof(char);
+      if (ty == CHAR) *++e = SC;
+      else if (ty == INT32) *++e = SI32;
+      else *++e = SI;
+      *++e = PSH; *++e = IMM;
+      if (ty > PTR) {
+        base_ty = ty - PTR;
+        while (base_ty > PTR) base_ty = base_ty - PTR;
+        if (base_ty == CHAR) *++e = sizeof(char);
+        else if (base_ty == INT32) *++e = 4;
+        else *++e = sizeof(int64_t);
+      } else {
+        *++e = 1;
+      }
       *++e = (tk == Inc) ? SUB : ADD;
       next();
     }
     else if (tk == Brak) {
       next(); *++e = PSH; expr(Assign);
       if (tk == ']') next(); else { printf("%d: close bracket expected\n", line); exit(-1); }
-      if (t > PTR) { *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = MUL;  }
+      if (t > PTR) {
+        *++e = PSH; *++e = IMM;
+        elem_ty = t - PTR;
+        if (elem_ty == CHAR) *++e = sizeof(char);
+        else if (elem_ty == INT32) *++e = 4;
+        else *++e = sizeof(int64_t);
+        *++e = MUL;
+      }
       else if (t < PTR) { printf("%d: pointer type expected\n", line); exit(-1); }
       *++e = ADD;
       *++e = ((ty = t - PTR) == CHAR) ? LC : LI;
@@ -414,7 +530,7 @@ void expr(int lev)
 
 void stmt()
 {
-  int *a, *b;
+  int64_t *a, *b;
 
   if (tk == If) {
     next();
@@ -424,11 +540,11 @@ void stmt()
     *++e = BZ; b = ++e;
     stmt();
     if (tk == Else) {
-      *b = (int)(e + 3); *++e = JMP; b = ++e;
+      *b = (int64_t)(e + 3); *++e = JMP; b = ++e;
       next();
       stmt();
     }
-    *b = (int)(e + 1);
+    *b = (int64_t)(e + 1);
   }
   else if (tk == While) {
     next();
@@ -438,8 +554,8 @@ void stmt()
     if (tk == ')') next(); else { printf("%d: close paren expected\n", line); exit(-1); }
     *++e = BZ; b = ++e;
     stmt();
-    *++e = JMP; *++e = (int)a;
-    *b = (int)(e + 1);
+    *++e = JMP; *++e = (int64_t)a;
+    *b = (int64_t)(e + 1);
   }
   else if (tk == Return) {
     next();
@@ -461,13 +577,11 @@ void stmt()
   }
 }
 
-#undef int
 int main(int argc, char **argv)
 {
-#define int long long
-  int fd, bt, ty, poolsz, *idmain;
-  int *pc, *sp, *bp, a, cycle; // vm registers
-  int i, *t; // temps
+  int64_t fd, bt, ty, poolsz, *idmain, *s, *m, base_ty;
+  int64_t *pc, *sp, *bp, a, cycle;
+  int64_t i, *t;
 
   --argc; ++argv;
   if (argc > 0 && **argv == '-' && (*argv)[1] == 's') { src = 1; --argc; ++argv; }
@@ -487,10 +601,10 @@ int main(int argc, char **argv)
   memset(e,    0, poolsz);
   memset(data, 0, poolsz);
 
-  p = "char else enum if int return sizeof struct typedef union while "
+  p = "char else enum if int int32_t int64_t return sizeof struct typedef union while "
       "open read close printf malloc free memset memcmp exit write system popen pclose fread void main";
   i = Char; while (i <= While) { next(); id[Tk] = i++; } // add keywords to symbol table
-  i = OPEN; while (i <= FRED) { next(); id[Class] = Sys; id[Type] = INT; id[Val] = i++; } // add library to symbol table
+  i = OPEN; while (i <= FRED) { next(); id[Class] = Sys; id[Type] = INT64; id[Val] = i++; } // add library to symbol table
   next(); id[Tk] = Char; // handle void type
   next(); idmain = id; // keep track of main
 
@@ -503,8 +617,10 @@ int main(int argc, char **argv)
   line = 1;
   next();
   while (tk) {
-    bt = INT; // basetype
+    bt = INT64; // basetype (default to INT64 for backward compatibility)
     if (tk == Int) next();
+    else if (tk == Int32_t) { next(); bt = INT32; }
+    else if (tk == Int64_t) { next(); bt = INT64; }
     else if (tk == Char) { next(); bt = CHAR; }
     else if (tk == Enum) {
       next();
@@ -521,7 +637,7 @@ int main(int argc, char **argv)
             i = ival;
             next();
           }
-          id[Class] = Num; id[Type] = INT; id[Val] = i++;
+          id[Class] = Num; id[Type] = INT64; id[Val] = i++;
           if (tk == ',') next();
         }
         next();
@@ -531,7 +647,7 @@ int main(int argc, char **argv)
     else if (tk == Struct) {
       next();
       if (tk != '{') {
-        int *s = id;
+        s = id;
         next();
         if (id[Class] == Struct) bt = id[Type];
         
@@ -539,16 +655,18 @@ int main(int argc, char **argv)
         if (tk == '{') id = s;
       }
       if (tk == '{') {
-        int *s = id; 
-        s[Class] = Struct; 
-        s[Type] = (int)s; 
+        s = id;
+        s[Class] = Struct;
+        s[Type] = (int64_t)s; 
         s[Sline] = 0; 
         
         next();
         i = 0; 
         while (tk != '}') {
-          bt = INT;
+          bt = INT64;
           if (tk == Int) next();
+          else if (tk == Int32_t) { next(); bt = INT32; }
+          else if (tk == Int64_t) { next(); bt = INT64; }
           else if (tk == Char) { next(); bt = CHAR; }
           else if (tk == Struct) {
              next();
@@ -563,18 +681,23 @@ int main(int argc, char **argv)
             if (tk != Id) { printf("%d: bad struct member declaration\n", line); return -1; }
             if (id[Class] == Loc) { printf("%d: duplicate struct member definition\n", line); return -1; }
             
-            int *m = malloc(4 * sizeof(int));
+            m = malloc(4 * sizeof(int64_t));
             if (!m) { printf("%d: could not malloc member\n", line); return -1; }
-            m[0] = id[Hash]; 
-            m[1] = ty;       
-            m[2] = i;        
-            m[3] = s[Sline]; 
-            s[Sline] = (int)m; 
-            
+            m[0] = id[Hash];
+            m[1] = ty;
+            m[2] = i;
+            m[3] = s[Sline];
+            s[Sline] = (int64_t)m; 
+
             if (ty == CHAR) i = i + sizeof(char);
-            else if (ty == INT) i = i + sizeof(int);
-            else if (ty >= PTR && (ty & 3) != 0) i = i + sizeof(int); // Pointer
-            else i = i + ((int *)ty)[Val]; // Struct Value
+            else if (ty == INT32) i = i + 4;
+            else if (ty == INT64) i = i + sizeof(int64_t);
+            else {
+              base_ty = ty;
+              while (base_ty >= PTR) base_ty = base_ty - PTR;
+              if (base_ty != ty) i = i + sizeof(int64_t); // Pointer
+              else i = i + ((int64_t *)ty)[Val]; // Struct value
+            }
  
             next();
             if (tk == ',') next();
@@ -595,11 +718,13 @@ int main(int argc, char **argv)
       id[Type] = ty;
       if (tk == '(') { // function
         id[Class] = Fun;
-        id[Val] = (int)(e + 1);
+        id[Val] = (int64_t)(e + 1);
         next(); i = 0;
         while (tk != ')') {
-          ty = INT;
+          ty = INT64;
           if (tk == Int) next();
+          else if (tk == Int32_t) { next(); ty = INT32; }
+          else if (tk == Int64_t) { next(); ty = INT64; }
           else if (tk == Char) { next(); ty = CHAR; }
           while (tk == Mul) { next(); ty = ty + PTR; }
           if (tk != Id) { printf("%d: bad parameter declaration\n", line); return -1; }
@@ -614,7 +739,7 @@ int main(int argc, char **argv)
         if (tk != '{') { printf("%d: bad function definition\n", line); return -1; }
         loc = ++i;
         next();
-        while (tk == Int || tk == Char || tk == Struct) {
+        while (tk == Int || tk == Int32_t || tk == Int64_t || tk == Char || tk == Struct) {
           if (tk == Struct) {
             next();
             if (tk != Id) { printf("%d: bad struct declaration\n", line); return -1; }
@@ -625,8 +750,12 @@ int main(int argc, char **argv)
             }
             next();
           } else {
-            bt = (tk == Int) ? INT : CHAR;
-            next();
+            bt = INT64;
+            if (tk == Int) next();
+            else if (tk == Int32_t) { next(); bt = INT32; }
+            else if (tk == Int64_t) { next(); bt = INT64; }
+            else if (tk == Char) { next(); bt = CHAR; }
+            else next();
           }
           while (tk != ';') {
             ty = bt;
@@ -656,24 +785,27 @@ int main(int argc, char **argv)
       }
       else {
         id[Class] = Glo;
-        id[Val] = (int)data;
-        data = data + sizeof(int);
+        id[Val] = (int64_t)data;
+        // Allocate space based on type
+        if (ty == CHAR) data = data + sizeof(char);
+        else if (ty == INT32) data = data + 4;
+        else data = data + sizeof(int64_t); // INT64, pointers, or structs
       }
       if (tk == ',') next();
     }
     next();
   }
 
-  if (!(pc = (int *)idmain[Val])) { printf("main() not defined\n"); return -1; }
+  if (!(pc = (int64_t *)idmain[Val])) { printf("main() not defined\n"); return -1; }
   if (src) return 0;
 
   // setup stack
-  bp = sp = (int *)((int)sp + poolsz);
+  bp = sp = (int64_t *)((int64_t)sp + poolsz);
   *--sp = EXIT; // call exit if main returns
   *--sp = PSH; t = sp;
   *--sp = argc;
-  *--sp = (int)argv;
-  *--sp = (int)t;
+  *--sp = (int64_t)argv;
+  *--sp = (int64_t)t;
 
   // run...
   cycle = 0;
@@ -681,24 +813,26 @@ int main(int argc, char **argv)
     i = *pc++; ++cycle;
     if (debug) {
       printf("%d> %.4s", cycle,
-        &"LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,"
+        &"LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,LI32,SI  ,SC  ,SI32,PSH ,"
          "OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,"
          "OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,EXIT,WRIT,SYST,POPN,PCLS,FRED,"[i * 5]);
       if (i <= ADJ) printf(" %d\n", *pc); else printf("\n");
     }
-    if      (i == LEA) a = (int)(bp + *pc++);                             // load local address
+    if      (i == LEA) a = (int64_t)(bp + *pc++);                             // load local address
     else if (i == IMM) a = *pc++;                                         // load global address or immediate
-    else if (i == JMP) pc = (int *)*pc;                                   // jump
-    else if (i == JSR) { *--sp = (int)(pc + 1); pc = (int *)*pc; }        // jump to subroutine
-    else if (i == BZ)  pc = a ? pc + 1 : (int *)*pc;                      // branch if zero
-    else if (i == BNZ) pc = a ? (int *)*pc : pc + 1;                      // branch if not zero
-    else if (i == ENT) { *--sp = (int)bp; bp = sp; sp = sp - *pc++; }     // enter subroutine
+    else if (i == JMP) pc = (int64_t *)*pc;                                   // jump
+    else if (i == JSR) { *--sp = (int64_t)(pc + 1); pc = (int64_t *)*pc; }        // jump to subroutine
+    else if (i == BZ)  pc = a ? pc + 1 : (int64_t *)*pc;                      // branch if zero
+    else if (i == BNZ) pc = a ? (int64_t *)*pc : pc + 1;                      // branch if not zero
+    else if (i == ENT) { *--sp = (int64_t)bp; bp = sp; sp = sp - *pc++; }     // enter subroutine
     else if (i == ADJ) sp = sp + *pc++;                                   // stack adjust
-    else if (i == LEV) { sp = bp; bp = (int *)*sp++; pc = (int *)*sp++; } // leave subroutine
-    else if (i == LI)  a = *(int *)a;                                     // load int
+    else if (i == LEV) { sp = bp; bp = (int64_t *)*sp++; pc = (int64_t *)*sp++; } // leave subroutine
+    else if (i == LI)  a = *(int64_t *)a;                                     // load int64
     else if (i == LC)  a = *(char *)a;                                    // load char
-    else if (i == SI)  *(int *)*sp++ = a;                                 // store int
+    else if (i == LI32) a = *(int32_t *)a;                                // load int32 (sign-extend)
+    else if (i == SI)  *(int64_t *)*sp++ = a;                                 // store int64
     else if (i == SC)  a = *(char *)*sp++ = a;                            // store char
+    else if (i == SI32) *(int32_t *)*sp++ = (int32_t)a;                   // store int32
     else if (i == PSH) *--sp = a;                                         // push
 
     else if (i == OR)  a = *sp++ |  a;
@@ -722,14 +856,14 @@ int main(int argc, char **argv)
     else if (i == READ) a = read(sp[2], (char *)sp[1], *sp);
     else if (i == CLOS) a = close(*sp);
     else if (i == PRTF) { t = sp + pc[1]; a = printf((char *)t[-1], t[-2], t[-3], t[-4], t[-5], t[-6]); }
-    else if (i == MALC) a = (int)malloc(*sp);
+    else if (i == MALC) a = (int64_t)malloc(*sp);
     else if (i == FREE) free((void *)*sp);
-    else if (i == MSET) a = (int)memset((char *)sp[2], sp[1], *sp);
+    else if (i == MSET) a = (int64_t)memset((char *)sp[2], sp[1], *sp);
     else if (i == MCMP) a = memcmp((char *)sp[2], (char *)sp[1], *sp);
-    else if (i == EXIT) { printf("exit(%d) cycle = %d\n", *sp, cycle); return *sp; }
+    else if (i == EXIT) { printf("exit(%lld) cycle = %lld\n", *sp, cycle); return *sp; }
     else if (i == WRIT) a = write(sp[2], (char *)sp[1], *sp);
     else if (i == SYST) a = system((char *)*sp);
-    else if (i == POPN) a = (int)popen((char *)sp[1], (char *)*sp);
+    else if (i == POPN) a = (int64_t)popen((char *)sp[1], (char *)*sp);
     else if (i == PCLS) a = pclose((void *)*sp);
     else if (i == FRED) a = fread((void *)sp[3], sp[2], sp[1], (void *)*sp);
     else { printf("unknown instruction = %d! cycle = %d\n", i, cycle); return -1; }

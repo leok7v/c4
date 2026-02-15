@@ -95,22 +95,49 @@ All tests passing with clean exit codes (0):
 
 ## Future Work
 
-### 1. Type System Migration (Priority: Medium)
+### 1. Type System Migration (Priority: HIGH - IN PROGRESS)
 **Current State**: c4 uses `#define int long long` which works on LP64 systems (Linux/macOS) but is problematic:
 - Not portable to Windows (LLP64: long is 32-bit, long long is 64-bit)
 - Confuses type semantics (int should be 32-bit by convention)
 - Compiler warnings about format specifiers
+- **BLOCKS SELF-COMPILATION**: c4 cannot compile itself because it doesn't expand `#define INT INT64`
 
-**Required Changes**:
-- Replace with proper stdint.h types: `int64_t`, `int32_t`, `int16_t`, `int8_t`
-- Add unsigned type support: `uint64_t`, `uint32_t`, etc.
-- Update VM to handle different integer sizes properly
-- Fix format specifiers in printf/scanf
+**Implementation Status** (Feb 14, 2026):
+- ✅ Added `int32_t` and `int64_t` keywords
+- ✅ Added INT32/INT64 type constants (CHAR=0, INT32=1, INT64=2, PTR=3)
+- ✅ Added LI32/SI32 VM opcodes for 32-bit load/store
+- ✅ Updated all type parsing in sizeof, casts, declarations
+- ✅ Fixed increment/decrement to use proper sizes
+- ✅ Fixed pointer arithmetic for different element sizes
+- ✅ Test suite passes: test/int32_64.c validates all features
+- ✅ **Output matches gcc exactly**
 
-**Files to Modify**:
-- c4.c: Type constants (INT, CHAR, PTR)
-- c4.c: VM opcodes (LI, LC, SI, SC need size variants)
-- Build flags: Can remove `-w` once warnings are properly addressed
+**Known Issues**:
+1. **Self-compilation broken**: `./c4 c4.c` fails at line 142 because c4 doesn't recognize `INT` macro
+2. **Struct tests regression**: test/struct/simple.c segfaults (was working before int32_t changes)
+3. **Struct pointer test**: test/struct/ptr.c fails with "bad lvalue in assignment"
+
+**Next Steps** (prioritized):
+1. **Fix self-compilation** (PRIORITY 1):
+   - Remove `#define INT INT64` hack
+   - Replace all `int` with `int64_t` in c4.c source where size matters
+   - Use `int32_t` for printf %d compatibility 
+   - Make code "int-precision independent"
+   - This is mostly grep/replace work
+
+2. **Fix struct test regression** (PRIORITY 2):
+   - Debug why struct member access broke
+   - Issue: struct value detection logic `(ty > 100) && ((ty % PTR) != 0)` may be wrong
+   - Arrow operator needs fixing for new type system
+
+3. **Update AGENTS.md** (PRIORITY 3):
+   - Document completed int32_t/int64_t implementation
+   - Move to "Completed Features" section
+
+**Files Modified**:
+- c4.c: Type constants, opcodes, parser, VM execution (DONE)
+- test/int32_64.c: Comprehensive test (DONE)
+- Build flags: Can remove `-w` once self-compilation works
 
 ### 2. Argv Support for Interpreted Programs (Priority: Low)
 - **Issue**: test/args.c currently skipped because c4 doesn't properly pass argv to interpreted programs.

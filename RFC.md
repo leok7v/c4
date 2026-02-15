@@ -2,13 +2,70 @@
 
 This document collects Request for Comments (RFCs) on potential future features for the `c4` compiler. The goal is to evaluate the cost, complexity, and impact on the project's minimalist philosophy before implementation.
 
+---
+
+## ✅ COMPLETED: Extended Integer Types (`int32_t`, `int64_t`)
+
+### Status: IMPLEMENTED (Feb 14, 2026)
+**Implementation**: Storage-and-Computation Support
+
+### What Works:
+- ✅ `int32_t` and `int64_t` keywords recognized
+- ✅ `sizeof(int32_t)` returns 4, `sizeof(int64_t)` returns 8
+- ✅ New VM opcodes: LI32 (load 32-bit), SI32 (store 32-bit)
+- ✅ Proper 32-bit sign extension on load
+- ✅ Pointer arithmetic scales by element size
+- ✅ Increment/decrement work correctly
+- ✅ **Output matches gcc exactly**
+
+### Known Limitations:
+1. **Self-compilation broken**: c4 cannot compile itself due to `#define INT INT64` macro
+2. **Struct tests regressed**: Changes broke test/struct/simple.c and test/struct/ptr.c  
+3. **No unsigned support**: Only signed int32_t/int64_t implemented
+
+### Test Coverage:
+- test/int32_64.c: Comprehensive test validates all operations
+- Comparison: `./c4 test/int32_64.c` matches `gcc test/int32_64.c` output
+
+### Next Steps (Prioritized):
+- **PRIORITY 1**: Fix self-compilation by making c4.c int-precision independent (grep/replace `int` → `int64_t` where needed)
+- **PRIORITY 2**: Fix struct test regression (debug struct value detection logic)
+- **PRIORITY 3**: Add uint32_t/uint64_t support (LOW priority)
+
+---
+
+## Feature: Extended Integer Types - Phase 2 (Unsigned Support)
+
+### Motivation
+Support `uint32_t` and `uint64_t` for bitwise operations, binary formats, and unsigned arithmetic.
+
+### Requirements (Beyond Current Implementation):
+1. **VM Instructions**:
+   - Unsigned comparisons: BLTU, BGTU, BLEU, BGEU
+   - Unsigned division/modulo (different behavior on x86)
+   - Logical right shift (vs arithmetic shift)
+
+2. **Type System**:
+   - Distinguish signed vs unsigned in type encoding
+   - Implicit conversion rules (C spec is complex here)
+
+3. **Printf Support**:
+   - `%u` format specifier handling
+
+### Cost Analysis
+- **Code Size**: Medium (~100 lines)
+- **Complexity**: Medium - need to track signedness
+- **Priority**: LOW - can be added incrementally
+
+---
+
 ## Feature: Floating Point Support (`float`, `double`)
 
 ### Motivation
 To support scientific computing, geometry, and clearer code that requires fractional numbers.
 
 ### Implementation Requirements
-1.  **Type System**: Expand `enum { CHAR, INT, PTR }` to include `FLOAT` (and/or `DOUBLE`).
+1.  **Type System**: Expand `enum { CHAR, INT32, INT64, PTR }` to include `FLOAT` (and/or `DOUBLE`).
 2.  **VM Instructions**:
     *   Need duplicating arithmetic instructions: `FADD`, `FSUB`, `FMUL`, `FDIV`.
     *   Need duplicating comparison instructions: `FEQ`, `FNE`, `FLT`, `FGT`, `FLE`, `FGE`.
@@ -26,48 +83,26 @@ To support scientific computing, geometry, and clearer code that requires fracti
 
 ---
 
-## Feature: Extended Integer Types (`[u]int8/16/32/64_t`)
-
-### Motivation
-To support standard C types, binary file formats, and networking code where exact widths matter.
-
-### Approach 1: True Width Support
-1.  **VM Instructions**:
-    *   Currently `c4` supports `long long` (64-bit) and `char` (8-bit).
-    *   Need to add `SC` (Store Char), `SS` (Store Short/16-bit), `SI` (Store Int/32-bit).
-    *   Need matching Load instructions (`LC`, `LS`, `LI`) with correct sign extension logic.
-2.  **Unsigned Support**:
-    *   Strictly speaking, C requires different comparison logic for unsigned numbers (logical shift vs arithmetic shift, `ja` vs `jg`).
-    *   Would require `BLTU`, `BGTU`, `BLEU`, `BGEU` (Branch/Compare Unsigned) opcodes.
-
-### Approach 2: Storage-Only Support (Easier)
-*   Treat all variables as full 64-bit integers in registers.
-*   Only truncate when storing to memory (e.g., `int16_t *p; *p = val` masks to 16 bits).
-*   Requires tracking the "storage size" in the symbol table type.
-
-### Approach 3: Alias Support (Minimalist)
-*   Via `#define` or built-in `typedef`.
-*   `int8_t` -> `char`
-*   `int16_t` -> `int` (if on 16-bit machine) or just alias all to `int` (64-bit) and ignore width. This breaks binary compatibility but allows compilation of logic.
-
-### Cost Analysis
-*   **True Support**: Medium (~100-150 lines). Mostly boilerplate opcode duplication.
-*   **Alias Support**: Low (~20 lines).
-
----
-
 ## Feature: `typedef` / `struct` / `union`
+
+### Status: `struct` IMPLEMENTED (See AGENTS.md)
 
 ### Motivation
 Basic data structures are missing. Currently, `c4` only supports pointers and arrays (implicit).
 
-### Requirements
-*   **Structs**: Need to parse `{ int x; char y; }` and calculate offsets.
-*   **Access**: Logic for `.` operator. `->` is just `(*ptr).`.
-*   **Symbol Table**: Needs to store member names and offsets, scoped to the struct definition.
+### Struct Support (DONE):
+- ✅ Basic struct definitions
+- ✅ Member access via `.` operator
+- ✅ Pointer member access via `->` operator
+- ⚠️ Currently broken after int32_t/int64_t changes
+
+### Remaining Work:
+*   **typedef**: Alias support for types
+*   **union**: Overlapping member storage
 
 ### Cost Analysis
-*   **Code Size**: Medium-High. The single-pass nature makes forward declarations of structs tricky without backpatching or multi-pass.
+*   **typedef**: Low (~30 lines). Just symbol table management.
+*   **union**: Medium (~50 lines). Similar to struct but members share offset 0.
 
 ---
 
