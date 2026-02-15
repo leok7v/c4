@@ -22,6 +22,17 @@ jobs:
     - name: Create build directory
       run: mkdir -p ${{ github.workspace }}/build
     
+    - name: Verify build directory
+      run: |
+        pwd
+        ls -la
+        ls -la build/
+        echo "Build directory created at: $(pwd)/build"
+        echo "test" > build/test.txt
+        cat build/test.txt
+        rm build/test.txt
+        echo "✓ Can write to build directory"
+    
     - name: Run struct tests
       run: |
         echo "=== Testing struct/simple.c ==="
@@ -33,8 +44,10 @@ jobs:
     
     - name: Run basic tests
       run: |
+        pwd
+        ls -la build/ || echo "build directory not found!"
         echo "=== Testing io.c ==="
-        ./c4 test/io.c
+        ./c4 test/io.c || (ls -la build/; exit 1)
         echo "Note: args.c skipped - c4 doesn't properly support argv for interpreted programs"
     
     - name: Test self-compilation
