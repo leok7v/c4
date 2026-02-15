@@ -158,7 +158,24 @@ All tests passing with clean exit codes (0):
 
 ## Development Notes
 
-### Testing
-- Use `./tmp/` directory for temporary test files (not `/tmp/`)
-- The `./tmp/` directory is gitignored for local testing convenience
-- Debug binaries (`c4_debug`, `c4_gcc`, `c4_old`) are also gitignored
+### Local Development Workflow
+
+**IMPORTANT: Always follow these practices to avoid permission issues and ensure clean testing:**
+
+1. **Temporary Test Files**: Use `./tmp/` directory (NOT `/tmp/`)
+   - VSCode asks for permission on every `/tmp/` file access
+   - `./tmp/` is gitignored and available for local testing
+   - Example: `cat > ./tmp/test.c << 'EOF' ... EOF`
+
+2. **Build Outputs**: Use `./build/` directory for compiled binaries
+   - Keep build artifacts separate from source
+   - `./build/` is gitignored
+   - Example: `clang -o ./build/c4 c4.c`
+
+3. **Test CI Locally Before Pushing**: Always run `gh` workflow test before pushing
+   - GitHub CLI (`gh`) is available on this host
+   - Test workflow locally: `gh workflow run ci.yml` or use act/gh features
+   - Verify changes don't break CI before committing
+   - Saves CI minutes and catches issues early
+
+4. **Debug Binaries**: Also gitignored: `c4_debug`, `c4_gcc`, `c4_old`, `c4_debug.dSYM/`
