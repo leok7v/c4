@@ -6,6 +6,8 @@
 
 // Written by Robert Swierczek
 
+#define _POSIX_C_SOURCE 200809L
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <memory.h>
@@ -53,13 +55,13 @@ void next()
     ++p;
     if (tk == '\n') {
       if (src) {
-        printf("%d: %.*s", line, p - lp, lp);
+        printf("%d: %.*s", (int)line, (int)(p - lp), lp);
         lp = p;
         while (le < e) {
           printf("%8.4s", &"LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,LI32,SI  ,SC  ,SI32,PSH ,"
                            "OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,"
                            "OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,EXIT,WRIT,SYST,POPN,PCLS,FRED,"[*++le * 5]);
-          if (*le <= ADJ) printf(" %d\n", *++le); else printf("\n");
+          if (*le <= ADJ) printf(" %lld\n", *++le); else printf("\n");
         }
       }
       ++line;
@@ -135,7 +137,7 @@ void expr(int64_t lev)
 {
   int64_t t, *d, is_struct_value, is_struct_val, base_ty, elem_ty, *s, *m;
 
-  if (!tk) { printf("%d: unexpected eof in expression\n", line); exit(-1); }
+  if (!tk) { printf("%d: unexpected eof in expression\n", (int)line); exit(-1); }
   else if (tk == Num) { *++e = IMM; *++e = ival; next(); ty = INT64; }
   else if (tk == '"') {
     *++e = IMM; *++e = ival; next();
@@ -143,14 +145,14 @@ void expr(int64_t lev)
     data = (char *)((int64_t)data + sizeof(int64_t) & -sizeof(int64_t)); ty = PTR;
   }
   else if (tk == Sizeof) {
-    next(); if (tk == '(') next(); else { printf("%d: open paren expected in sizeof\n", line); exit(-1); }
+    next(); if (tk == '(') next(); else { printf("%d: open paren expected in sizeof\n", (int)line); exit(-1); }
     ty = INT64; 
     if (tk == Int) next(); 
     else if (tk == Int32_t) { next(); ty = INT32; }
     else if (tk == Int64_t) { next(); ty = INT64; }
     else if (tk == Char) { next(); ty = CHAR; }
     while (tk == Mul) { next(); ty = ty + PTR; }
-    if (tk == ')') next(); else { printf("%d: close paren expected in sizeof\n", line); exit(-1); }
+    if (tk == ')') next(); else { printf("%d: close paren expected in sizeof\n", (int)line); exit(-1); }
     *++e = IMM;
     if (ty == CHAR) *++e = sizeof(char);
     else if (ty == INT32) *++e = 4;
@@ -166,7 +168,7 @@ void expr(int64_t lev)
       next();
       if (d[Class] == Sys) *++e = d[Val];
       else if (d[Class] == Fun) { *++e = JSR; *++e = d[Val]; }
-      else { printf("%d: bad function call\n", line); exit(-1); }
+      else { printf("%d: bad function call\n", (int)line); exit(-1); }
       if (t) { *++e = ADJ; *++e = t; }
       ty = d[Type];
     }
@@ -174,7 +176,7 @@ void expr(int64_t lev)
     else {
       if (d[Class] == Loc) { *++e = LEA; *++e = loc - d[Val]; }
       else if (d[Class] == Glo) { *++e = IMM; *++e = d[Val]; }
-      else { printf("%d: undefined variable\n", line); exit(-1); }
+      else { printf("%d: undefined variable\n", (int)line); exit(-1); }
       ty = d[Type];
       
       // Load value based on type:
@@ -213,18 +215,18 @@ void expr(int64_t lev)
       else if (tk == Int64_t) { next(); t = INT64; }
       else if (tk == Char) { next(); t = CHAR; }
       while (tk == Mul) { next(); t = t + PTR; }
-      if (tk == ')') next(); else { printf("%d: bad cast\n", line); exit(-1); }
+      if (tk == ')') next(); else { printf("%d: bad cast\n", (int)line); exit(-1); }
       expr(Inc);
       ty = t;
     }
     else {
       expr(Assign);
-      if (tk == ')') next(); else { printf("%d: close paren expected\n", line); exit(-1); }
+      if (tk == ')') next(); else { printf("%d: close paren expected\n", (int)line); exit(-1); }
     }
   }
   else if (tk == Mul) {
     next(); expr(Inc);
-    if (ty > INT64) ty = ty - PTR; else { printf("%d: bad dereference\n", line); exit(-1); }
+    if (ty > INT64) ty = ty - PTR; else { printf("%d: bad dereference\n", (int)line); exit(-1); }
     if (ty == CHAR) *++e = LC;
     else if (ty == INT32) *++e = LI32;
     else *++e = LI;
@@ -258,9 +260,9 @@ void expr(int64_t lev)
       base_ty = ty;
       while (base_ty >= PTR) base_ty = base_ty - PTR;
       if (ty > 100 && base_ty == ty) ; // Struct value - accepted
-      else { printf("%d: bad address-of\n", line); exit(-1); }
+      else { printf("%d: bad address-of\n", (int)line); exit(-1); }
     }
-    else { printf("%d: bad address-of\n", line); exit(-1); }
+    else { printf("%d: bad address-of\n", (int)line); exit(-1); }
 
     ty = ty + PTR;
   }
@@ -277,7 +279,7 @@ void expr(int64_t lev)
     if (*e == LC) { *e = PSH; *++e = LC; }
     else if (*e == LI32) { *e = PSH; *++e = LI32; }
     else if (*e == LI) { *e = PSH; *++e = LI; }
-    else { printf("%d: bad lvalue in pre-increment\n", line); exit(-1); }
+    else { printf("%d: bad lvalue in pre-increment\n", (int)line); exit(-1); }
     *++e = PSH;
     *++e = IMM;
     // For pointers, add/sub the size of pointed-to type
@@ -296,14 +298,14 @@ void expr(int64_t lev)
     else if (ty == INT32) *++e = SI32;
     else *++e = SI;
   }
-  else { printf("%d: bad expression\n", line); exit(-1); }
+  else { printf("%d: bad expression\n", (int)line); exit(-1); }
 
   while (tk == '[' || tk == '.' || tk == Arrow) {
     if (tk == '[') {
       next();
-      if (*e == LC || *e == LI32 || *e == LI) *e = PSH; else { printf("%d: bad index\n", line); exit(-1); }
+      if (*e == LC || *e == LI32 || *e == LI) *e = PSH; else { printf("%d: bad index\n", (int)line); exit(-1); }
       expr(Assign);
-      if (tk == ']') next(); else { printf("%d: close bracket expected\n", line); exit(-1); }
+      if (tk == ']') next(); else { printf("%d: close bracket expected\n", (int)line); exit(-1); }
       if (ty > INT64) {
         ty = ty - PTR;
         *++e = IMM;
@@ -313,7 +315,7 @@ void expr(int64_t lev)
         else *++e = sizeof(int64_t); // INT64 or pointers
         *++e = MUL;
       }
-      else { printf("%d: bad pointer in index\n", line); exit(-1); }
+      else { printf("%d: bad pointer in index\n", (int)line); exit(-1); }
       *++e = ADD;
       if (ty == CHAR) *++e = LC;
       else if (ty == INT32) *++e = LI32;
@@ -326,9 +328,9 @@ void expr(int64_t lev)
       is_struct_val = (ty > 100) && (base_ty == ty);
       if (is_struct_val) ; // Struct Value. Address in Accumulator.
       else if (*e == LC || *e == LI32 || *e == LI) *e = PSH; // Value in Accumulator? 
-      else { printf("%d: bad struct value\n", line); exit(-1); }
+      else { printf("%d: bad struct value\n", (int)line); exit(-1); }
 
-      if (tk != Id) { printf("%d: bad struct member\n", line); exit(-1); }
+      if (tk != Id) { printf("%d: bad struct member\n", (int)line); exit(-1); }
       
       // Calculate member offset from struct metadata
       // ty is StructID.
@@ -359,24 +361,24 @@ void expr(int64_t lev)
           m = (int64_t *)m[3];
         }
       }
-      if (!t) { printf("%d: member not found\n", line); exit(-1); }
+      if (!t) { printf("%d: member not found\n", (int)line); exit(-1); }
       next();
     }
     else if (tk == Arrow) {
       next();
       if (*e == LC || *e == LI32 || *e == LI) ; // Already loaded pointer.
-      else { printf("%d: bad struct pointer for arrow\n", line); exit(-1); }
+      else { printf("%d: bad struct pointer for arrow\n", (int)line); exit(-1); }
       // printf("ty=%d PTR=%d\n", ty, PTR);
       if (ty > PTR) {
         ty = ty - PTR;
         base_ty = ty;
         while (base_ty >= PTR) base_ty = base_ty - PTR;
-        if (base_ty == ty || ty <= PTR) { printf("%d: not a struct pointer\n", line); exit(-1); }
+        if (base_ty == ty || ty <= PTR) { printf("%d: not a struct pointer\n", (int)line); exit(-1); }
       }
-      else { printf("%d: not a struct pointer\n", line); exit(-1); }
+      else { printf("%d: not a struct pointer\n", (int)line); exit(-1); }
 
 
-      if (tk != Id) { printf("%d: bad struct member\n", line); exit(-1); }
+      if (tk != Id) { printf("%d: bad struct member\n", (int)line); exit(-1); }
 
       s = (int64_t *)ty;
       m = (int64_t *)s[Sline];
@@ -399,7 +401,7 @@ void expr(int64_t lev)
           m = (int64_t *)m[3];
         }
       }
-      if (!t) { printf("%d: member not found\n", line); exit(-1); }
+      if (!t) { printf("%d: member not found\n", (int)line); exit(-1); }
       next();
     }
   }
@@ -409,7 +411,7 @@ void expr(int64_t lev)
     if (tk == Assign) {
       next();
       if (*e == LC || *e == LI32 || *e == LI) *e = PSH; 
-      else { printf("%d: bad lvalue in assignment\n", line); exit(-1); }
+      else { printf("%d: bad lvalue in assignment\n", (int)line); exit(-1); }
       expr(Assign); 
       if ((ty = t) == CHAR) *++e = SC;
       else if (ty == INT32) *++e = SI32;
@@ -419,7 +421,7 @@ void expr(int64_t lev)
       next();
       *++e = BZ; d = ++e;
       expr(Assign);
-      if (tk == ':') next(); else { printf("%d: conditional missing colon\n", line); exit(-1); }
+      if (tk == ':') next(); else { printf("%d: conditional missing colon\n", (int)line); exit(-1); }
       *d = (int64_t)(e + 3); *++e = JMP; d = ++e;
       expr(Cond);
       *d = (int64_t)(e + 1);
@@ -478,7 +480,7 @@ void expr(int64_t lev)
       if (*e == LC) { *e = PSH; *++e = LC; }
       else if (*e == LI32) { *e = PSH; *++e = LI32; }
       else if (*e == LI) { *e = PSH; *++e = LI; }
-      else { printf("%d: bad lvalue in post-increment\n", line); exit(-1); }
+      else { printf("%d: bad lvalue in post-increment\n", (int)line); exit(-1); }
       *++e = PSH; *++e = IMM;
       // For pointers, add/sub the size of pointed-to type
       // For scalars (CHAR, INT32, INT64), add/sub 1
@@ -510,7 +512,7 @@ void expr(int64_t lev)
     }
     else if (tk == Brak) {
       next(); *++e = PSH; expr(Assign);
-      if (tk == ']') next(); else { printf("%d: close bracket expected\n", line); exit(-1); }
+      if (tk == ']') next(); else { printf("%d: close bracket expected\n", (int)line); exit(-1); }
       if (t > PTR) {
         *++e = PSH; *++e = IMM;
         elem_ty = t - PTR;
@@ -519,11 +521,11 @@ void expr(int64_t lev)
         else *++e = sizeof(int64_t);
         *++e = MUL;
       }
-      else if (t < PTR) { printf("%d: pointer type expected\n", line); exit(-1); }
+      else if (t < PTR) { printf("%d: pointer type expected\n", (int)line); exit(-1); }
       *++e = ADD;
       *++e = ((ty = t - PTR) == CHAR) ? LC : LI;
     }
-    else { printf("%d: compiler error tk=%d\n", line, tk); exit(-1); }
+    else { printf("%d: compiler error tk=%d\n", (int)line, (int)tk); exit(-1); }
   }
 }
 
@@ -534,9 +536,9 @@ void stmt()
 
   if (tk == If) {
     next();
-    if (tk == '(') next(); else { printf("%d: open paren expected\n", line); exit(-1); }
+    if (tk == '(') next(); else { printf("%d: open paren expected\n", (int)line); exit(-1); }
     expr(Assign);
-    if (tk == ')') next(); else { printf("%d: close paren expected\n", line); exit(-1); }
+    if (tk == ')') next(); else { printf("%d: close paren expected\n", (int)line); exit(-1); }
     *++e = BZ; b = ++e;
     stmt();
     if (tk == Else) {
@@ -549,9 +551,9 @@ void stmt()
   else if (tk == While) {
     next();
     a = e + 1;
-    if (tk == '(') next(); else { printf("%d: open paren expected\n", line); exit(-1); }
+    if (tk == '(') next(); else { printf("%d: open paren expected\n", (int)line); exit(-1); }
     expr(Assign);
-    if (tk == ')') next(); else { printf("%d: close paren expected\n", line); exit(-1); }
+    if (tk == ')') next(); else { printf("%d: close paren expected\n", (int)line); exit(-1); }
     *++e = BZ; b = ++e;
     stmt();
     *++e = JMP; *++e = (int64_t)a;
@@ -561,7 +563,7 @@ void stmt()
     next();
     if (tk != ';') expr(Assign);
     *++e = LEV;
-    if (tk == ';') next(); else { printf("%d: semicolon expected\n", line); exit(-1); }
+    if (tk == ';') next(); else { printf("%d: semicolon expected\n", (int)line); exit(-1); }
   }
   else if (tk == '{') {
     next();
@@ -573,7 +575,7 @@ void stmt()
   }
   else {
     expr(Assign);
-    if (tk == ';') next(); else { printf("%d: semicolon expected\n", line); exit(-1); }
+    if (tk == ';') next(); else { printf("%d: semicolon expected\n", (int)line); exit(-1); }
   }
 }
 
@@ -592,10 +594,10 @@ int main(int argc, char **argv)
   if ((fd = open(*argv, 0)) < 0) { printf("could not open(%s)\n", *argv); return -1; }
 
   poolsz = 256*1024; // arbitrary size
-  if (!(sym = malloc(poolsz))) { printf("could not malloc(%d) symbol area\n", poolsz); return -1; }
-  if (!(le = e = malloc(poolsz))) { printf("could not malloc(%d) text area\n", poolsz); return -1; }
-  if (!(data = malloc(poolsz))) { printf("could not malloc(%d) data area\n", poolsz); return -1; }
-  if (!(sp = malloc(poolsz))) { printf("could not malloc(%d) stack area\n", poolsz); return -1; }
+  if (!(sym = malloc(poolsz))) { printf("could not malloc(%d) symbol area\n", (int)poolsz); return -1; }
+  if (!(le = e = malloc(poolsz))) { printf("could not malloc(%d) text area\n", (int)poolsz); return -1; }
+  if (!(data = malloc(poolsz))) { printf("could not malloc(%d) data area\n", (int)poolsz); return -1; }
+  if (!(sp = malloc(poolsz))) { printf("could not malloc(%d) stack area\n", (int)poolsz); return -1; }
 
   memset(sym,  0, poolsz);
   memset(e,    0, poolsz);
@@ -608,8 +610,8 @@ int main(int argc, char **argv)
   next(); id[Tk] = Char; // handle void type
   next(); idmain = id; // keep track of main
 
-  if (!(lp = p = malloc(poolsz))) { printf("could not malloc(%d) source area\n", poolsz); return -1; }
-  if ((i = read(fd, p, poolsz-1)) <= 0) { printf("read() returned %d\n", i); return -1; }
+  if (!(lp = p = malloc(poolsz))) { printf("could not malloc(%d) source area\n", (int)poolsz); return -1; }
+  if ((i = read(fd, p, poolsz-1)) <= 0) { printf("read() returned %d\n", (int)i); return -1; }
   p[i] = 0;
   close(fd);
 
@@ -629,11 +631,11 @@ int main(int argc, char **argv)
         next();
         i = 0;
         while (tk != '}') {
-          if (tk != Id) { printf("%d: bad enum identifier %d\n", line, tk); return -1; }
+          if (tk != Id) { printf("%d: bad enum identifier %d\n", (int)line, (int)tk); return -1; }
           next();
           if (tk == Assign) {
             next();
-            if (tk != Num) { printf("%d: bad enum initializer\n", line); return -1; }
+            if (tk != Num) { printf("%d: bad enum initializer\n", (int)line); return -1; }
             i = ival;
             next();
           }
@@ -670,19 +672,19 @@ int main(int argc, char **argv)
           else if (tk == Char) { next(); bt = CHAR; }
           else if (tk == Struct) {
              next();
-             if (tk == '{') { printf("%d: nested structs not supported\n", line); return -1; }
+             if (tk == '{') { printf("%d: nested structs not supported\n", (int)line); return -1; }
              if (id[Class] == Struct) bt = id[Type];
-             else { printf("%d: bad struct declaration\n", line); return -1; }
+             else { printf("%d: bad struct declaration\n", (int)line); return -1; }
              next();
           }
           while (tk != ';') {
             ty = bt;
             while (tk == Mul) { next(); ty = ty + PTR; }
-            if (tk != Id) { printf("%d: bad struct member declaration\n", line); return -1; }
-            if (id[Class] == Loc) { printf("%d: duplicate struct member definition\n", line); return -1; }
+            if (tk != Id) { printf("%d: bad struct member declaration\n", (int)line); return -1; }
+            if (id[Class] == Loc) { printf("%d: duplicate struct member definition\n", (int)line); return -1; }
             
             m = malloc(4 * sizeof(int64_t));
-            if (!m) { printf("%d: could not malloc member\n", line); return -1; }
+            if (!m) { printf("%d: could not malloc member\n", (int)line); return -1; }
             m[0] = id[Hash];
             m[1] = ty;
             m[2] = i;
@@ -712,8 +714,8 @@ int main(int argc, char **argv)
     while (tk != ';' && tk != '}') {
       ty = bt;
       while (tk == Mul) { next(); ty = ty + PTR; }
-      if (tk != Id) { printf("%d: bad global declaration\n", line); return -1; }
-      if (id[Class]) { printf("%d: duplicate global definition\n", line); return -1; }
+      if (tk != Id) { printf("%d: bad global declaration\n", (int)line); return -1; }
+      if (id[Class]) { printf("%d: duplicate global definition\n", (int)line); return -1; }
       next();
       id[Type] = ty;
       if (tk == '(') { // function
@@ -727,8 +729,8 @@ int main(int argc, char **argv)
           else if (tk == Int64_t) { next(); ty = INT64; }
           else if (tk == Char) { next(); ty = CHAR; }
           while (tk == Mul) { next(); ty = ty + PTR; }
-          if (tk != Id) { printf("%d: bad parameter declaration\n", line); return -1; }
-          if (id[Class] == Loc) { printf("%d: duplicate parameter definition\n", line); return -1; }
+          if (tk != Id) { printf("%d: bad parameter declaration\n", (int)line); return -1; }
+          if (id[Class] == Loc) { printf("%d: duplicate parameter definition\n", (int)line); return -1; }
           id[HClass] = id[Class]; id[Class] = Loc;
           id[HType]  = id[Type];  id[Type] = ty;
           id[HVal]   = id[Val];   id[Val] = i++;
@@ -736,17 +738,17 @@ int main(int argc, char **argv)
           if (tk == ',') next();
         }
         next();
-        if (tk != '{') { printf("%d: bad function definition\n", line); return -1; }
+        if (tk != '{') { printf("%d: bad function definition\n", (int)line); return -1; }
         loc = ++i;
         next();
         while (tk == Int || tk == Int32_t || tk == Int64_t || tk == Char || tk == Struct) {
           if (tk == Struct) {
             next();
-            if (tk != Id) { printf("%d: bad struct declaration\n", line); return -1; }
+            if (tk != Id) { printf("%d: bad struct declaration\n", (int)line); return -1; }
             if (id[Class] == Struct) {
               bt = id[Type]; // copy the Struct ID (address of symbol)
             } else {
-              printf("%d: %s not a struct\n", line, (char *)id[Name]); return -1;
+              printf("%d: %s not a struct\n", (int)line, (char *)id[Name]); return -1;
             }
             next();
           } else {
@@ -760,8 +762,8 @@ int main(int argc, char **argv)
           while (tk != ';') {
             ty = bt;
             while (tk == Mul) { next(); ty = ty + PTR; }
-            if (tk != Id) { printf("%d: bad local declaration\n", line); return -1; }
-            if (id[Class] == Loc) { printf("%d: duplicate local definition\n", line); return -1; }
+            if (tk != Id) { printf("%d: bad local declaration\n", (int)line); return -1; }
+            if (id[Class] == Loc) { printf("%d: duplicate local definition\n", (int)line); return -1; }
             id[HClass] = id[Class]; id[Class] = Loc;
             id[HType]  = id[Type];  id[Type] = ty;
             id[HVal]   = id[Val];   id[Val] = ++i;
@@ -812,11 +814,11 @@ int main(int argc, char **argv)
   while (1) {
     i = *pc++; ++cycle;
     if (debug) {
-      printf("%d> %.4s", cycle,
+      printf("%lld> %.4s", cycle,
         &"LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,LI32,SI  ,SC  ,SI32,PSH ,"
          "OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,"
          "OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,EXIT,WRIT,SYST,POPN,PCLS,FRED,"[i * 5]);
-      if (i <= ADJ) printf(" %d\n", *pc); else printf("\n");
+      if (i <= ADJ) printf(" %lld\n", *pc); else printf("\n");
     }
     if      (i == LEA) a = (int64_t)(bp + *pc++);                             // load local address
     else if (i == IMM) a = *pc++;                                         // load global address or immediate
@@ -866,6 +868,6 @@ int main(int argc, char **argv)
     else if (i == POPN) a = (int64_t)popen((char *)sp[1], (char *)*sp);
     else if (i == PCLS) a = pclose((void *)*sp);
     else if (i == FRED) a = fread((void *)sp[3], sp[2], sp[1], (void *)*sp);
-    else { printf("unknown instruction = %d! cycle = %d\n", i, cycle); return -1; }
+    else { printf("unknown instruction = %lld! cycle = %lld\n", i, cycle); return -1; }
   }
 }
