@@ -17,7 +17,7 @@ jobs:
     - uses: actions/checkout@v3
     
     - name: Build c4 compiler
-      run: clang -o c4 c4.c -O3 -m64 -std=c11
+      run: clang -o c4 c4.c -O3 -m64 -std=c11 -w
     
     - name: Create build directory
       run: mkdir -p build
@@ -39,8 +39,8 @@ jobs:
     
     - name: Test self-compilation
       run: |
-        echo "=== Self-compiling c4 ==="
-        ./c4 c4.c
+        echo "=== Self-compiling c4 and running struct test ==="
+        ./c4 c4.c test/struct/simple.c
     
     - name: Run all tests summary
       run: |
