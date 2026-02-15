@@ -1,14 +1,7 @@
 c4
-c4.exe
+# Build folder
 build/
 # Claude Code artifacts
 .claude/
-
-# Debug and test binaries
-c4_debug
-c4_debug.dSYM/
-c4_gcc
-c4_old
-
 # Temporary test directory
 tmp/

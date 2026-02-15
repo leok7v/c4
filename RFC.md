@@ -1,120 +1,83 @@
 # C4 Development RFCs
 
-This document collects Request for Comments (RFCs) on potential future features for the `c4` compiler. The goal is to evaluate the cost, complexity, and impact on the project's minimalist philosophy before implementation.
+Request for Comments on potential features. Evaluate cost, complexity, and impact on minimalist philosophy before implementation.
 
 ---
 
-## ✅ COMPLETED: Extended Integer Types (`int32_t`, `int64_t`)
+## Completed: Extended Integer Types (`int32_t`, `int64_t`)
 
-### Status: IMPLEMENTED (Feb 14, 2026)
-**Implementation**: Storage-and-Computation Support
+**Status**: Fully implemented and working (Feb 2026)
 
-### What Works:
-- ✅ `int32_t` and `int64_t` keywords recognized
-- ✅ `sizeof(int32_t)` returns 4, `sizeof(int64_t)` returns 8
-- ✅ New VM opcodes: LI32 (load 32-bit), SI32 (store 32-bit)
-- ✅ Proper 32-bit sign extension on load
-- ✅ Pointer arithmetic scales by element size
-- ✅ Increment/decrement work correctly
-- ✅ **Output matches gcc exactly**
-
-### Known Limitations:
-1. **Self-compilation broken**: c4 cannot compile itself due to `#define INT INT64` macro
-2. **Struct tests regressed**: Changes broke test/struct/simple.c and test/struct/ptr.c  
-3. **No unsigned support**: Only signed int32_t/int64_t implemented
-
-### Test Coverage:
-- test/int32_64.c: Comprehensive test validates all operations
-- Comparison: `./c4 test/int32_64.c` matches `gcc test/int32_64.c` output
-
-### Next Steps (Prioritized):
-- **PRIORITY 1**: Fix self-compilation by making c4.c int-precision independent (grep/replace `int` → `int64_t` where needed)
-- **PRIORITY 2**: Fix struct test regression (debug struct value detection logic)
-- **PRIORITY 3**: Add uint32_t/uint64_t support (LOW priority)
+- `int32_t` and `int64_t` keywords, sizeof, casts, arithmetic
+- LI32/SI32 VM opcodes with proper 32-bit sign extension
+- Pointer arithmetic scales by element size (1/4/8)
+- Self-compilation works, all tests pass, output matches gcc
 
 ---
 
-## Feature: Extended Integer Types - Phase 2 (Unsigned Support)
+## Completed: Struct Support
 
-### Motivation
-Support `uint32_t` and `uint64_t` for bitwise operations, binary formats, and unsigned arithmetic.
+**Status**: Fully implemented (Feb 2026)
 
-### Requirements (Beyond Current Implementation):
-1. **VM Instructions**:
-   - Unsigned comparisons: BLTU, BGTU, BLEU, BGEU
-   - Unsigned division/modulo (different behavior on x86)
-   - Logical right shift (vs arithmetic shift)
-
-2. **Type System**:
-   - Distinguish signed vs unsigned in type encoding
-   - Implicit conversion rules (C spec is complex here)
-
-3. **Printf Support**:
-   - `%u` format specifier handling
-
-### Cost Analysis
-- **Code Size**: Medium (~100 lines)
-- **Complexity**: Medium - need to track signedness
-- **Priority**: LOW - can be added incrementally
+- Struct definitions with sequential type IDs (PTR=256 encoding)
+- Member access via `.` and `->` (shared `memacc()` function)
+- Nested struct support with correct offset chaining
+- Struct padding/alignment (char=1B, int32=4B, int64/ptr=8B boundaries)
+- `sizeof(struct X)` returns padded struct size
+- `(struct X *)` cast expressions
+- Arrays of structs with correct element size scaling
+- Struct pointer arithmetic (add/sub/inc/dec scale by struct size)
 
 ---
 
-## Feature: Floating Point Support (`float`, `double`)
+## Completed: Array Declarations
 
-### Motivation
-To support scientific computing, geometry, and clearer code that requires fractional numbers.
+**Status**: Fully implemented (Feb 2026)
 
-### Implementation Requirements
-1.  **Type System**: Expand `enum { CHAR, INT32, INT64, PTR }` to include `FLOAT` (and/or `DOUBLE`).
-2.  **VM Instructions**:
-    *   Need duplicating arithmetic instructions: `FADD`, `FSUB`, `FMUL`, `FDIV`.
-    *   Need duplicating comparison instructions: `FEQ`, `FNE`, `FLT`, `FGT`, `FLE`, `FGE`.
-    *   Need conversion instructions: `ITOF` (int to float), `FTOI` (float to int).
-3.  **Parser Logic (`expr()`)**:
-    *   **Parsing Literals**: Need to handle `1.23` or `1e-5` in `next()`. Currently only parses integers.
-    *   **Type Promotion**: When binary operators encounter mixed types (`int + float`), the parser must inject conversion instructions (`ITOF`) before the operation.
-    *   **Register Management**: The VM uses `long long` for registers. A `double` fits in `long long` (64-bit), but `float` (32-bit) would need to be handled or promoted to `double`.
-4.  **Standard Library**: `printf` handling for `%f` requires implementation or bridging to host `printf`.
-
-### Cost Analysis
-*   **Code Size**: High (~200-300 lines). Doubling the number of opcodes and adding significant logic to `expr()`.
-*   **Complexity**: High. Implicit type promotion is error-prone in a single-pass compiler.
-*   **Impact**: Fundamental change to the "everything is an integer" architecture.
+- Local and global arrays: `int a[5];`, `char buf[10];`
+- Arrays of all types: char, int32_t, int64_t, pointers, structs
+- Array decay to pointer (type = element_type + PTR)
+- Postfix `[]` chains with `.` and `->`: `pts[i].x`
+- Correct element size scaling for all types
 
 ---
 
-## Feature: `typedef` / `struct` / `union`
-
-### Status: `struct` IMPLEMENTED (See AGENTS.md)
-
-### Motivation
-Basic data structures are missing. Currently, `c4` only supports pointers and arrays (implicit).
-
-### Struct Support (DONE):
-- ✅ Basic struct definitions
-- ✅ Member access via `.` operator
-- ✅ Pointer member access via `->` operator
-- ⚠️ Currently broken after int32_t/int64_t changes
-
-### Remaining Work:
-*   **typedef**: Alias support for types
-*   **union**: Overlapping member storage
-
-### Cost Analysis
-*   **typedef**: Low (~30 lines). Just symbol table management.
-*   **union**: Medium (~50 lines). Similar to struct but members share offset 0.
-
----
-
-## Feature: Preprocessor Macros (`#define` with args)
-
-### Motivation
-To support standard headers like `<stdint.h>`.
+## RFC: Unsigned Integer Types (`uint32_t`, `uint64_t`)
 
 ### Requirements
-*   A macro expander that handles arguments, stringification, and valid C token pasting.
-*   This is often as complex as the compiler itself.
+- Unsigned comparisons: BLTU, BGTU, BLEU, BGEU
+- Unsigned division/modulo
+- Logical right shift (vs arithmetic)
+- Type encoding: distinguish signed vs unsigned
+- `%u` printf format
 
-### Cost Analysis
-*   **Code Size**: Very High.
-*   **Recommendation**: Keep restricting to simple constants (`#define X 1`) or use an external preprocessor (`cpp | c4`).
+### Cost: Medium (~100 lines). Priority: LOW.
+
+---
+
+## RFC: Floating Point (`float`, `double`)
+
+### Requirements
+- New VM opcodes: FADD, FSUB, FMUL, FDIV, FEQ, FNE, FLT, FGT, FLE, FGE, ITOF, FTOI
+- Literal parsing: `1.23`, `1e-5` in `next()`
+- Type promotion rules (int + float)
+- `%f` printf support
+
+### Cost: High (~200-300 lines). Fundamental change to "everything is an integer" architecture.
+
+---
+
+## RFC: typedef / union
+
+### typedef
+Alias support for types. Cost: Low (~30 lines).
+
+### union
+Overlapping member storage (all members at offset 0). Cost: Medium (~50 lines).
+
+---
+
+## RFC: Preprocessor Macros (`#define` with args)
+
+Full macro expander nearly as complex as the compiler itself.
+**Recommendation**: Keep restricting to simple constants or use external preprocessor (`cpp | c4`).

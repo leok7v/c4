@@ -176,11 +176,13 @@ void expr(int64_t lev)
     else if (tk == Int32_t) { next(); ty = INT32; }
     else if (tk == Int64_t) { next(); ty = INT64; }
     else if (tk == Char) { next(); ty = CHAR; }
+    else if (tk == Struct) { next(); if (tk == Id && id[Class] == Struct) { ty = id[Type]; next(); } }
     while (tk == Mul) { next(); ty = ty + PTR; }
     if (tk == ')') next(); else { printf("%d: close paren expected in sizeof\n", (int)line); exit(-1); }
     *++e = IMM;
     if (ty == CHAR) *++e = sizeof(char);
     else if (ty == INT32) *++e = 4;
+    else if (ty > INT64 && ty < PTR) *++e = ((int64_t *)struct_syms[ty - INT64 - 1])[Val];
     else *++e = sizeof(int64_t); // INT64 and pointers
     ty = INT64;
   }
@@ -213,12 +215,13 @@ void expr(int64_t lev)
   }
   else if (tk == '(') {
     next();
-    if (tk == Int || tk == Int32_t || tk == Int64_t || tk == Char) {
+    if (tk == Int || tk == Int32_t || tk == Int64_t || tk == Char || tk == Struct) {
       t = INT64;
       if (tk == Int) next();
       else if (tk == Int32_t) { next(); t = INT32; }
       else if (tk == Int64_t) { next(); t = INT64; }
       else if (tk == Char) { next(); t = CHAR; }
+      else if (tk == Struct) { next(); if (tk == Id && id[Class] == Struct) { t = id[Type]; next(); } }
       while (tk == Mul) { next(); t = t + PTR; }
       if (tk == ')') next(); else { printf("%d: bad cast\n", (int)line); exit(-1); }
       expr(Inc);
@@ -608,9 +611,12 @@ int main(int argc, char **argv)
             if (!m) { printf("%d: could not malloc member\n", (int)line); return -1; }
             m[0] = id[Hash];
             m[1] = ty;
+            // align offset before member
+            if (ty == INT32) i = ((i + 3) / 4) * 4;
+            else if (ty != CHAR) i = ((i + 7) / 8) * 8;
             m[2] = i;
             m[3] = s[Sline];
-            s[Sline] = (int64_t)m; 
+            s[Sline] = (int64_t)m;
 
             if (ty == CHAR) i = i + sizeof(char);
             else if (ty == INT32) i = i + 4;
@@ -622,7 +628,7 @@ int main(int argc, char **argv)
           }
           next();
         }
-        s[Val] = i; 
+        s[Val] = ((i + 7) / 8) * 8; // pad struct size to 8-byte boundary
         next();
       }
     }
