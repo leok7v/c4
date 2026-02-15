@@ -204,7 +204,8 @@ void expr(int64_t lev)
       else { printf("%d: undefined variable\n", (int)line); exit(-1); }
       ty = d[Type];
       
-      if (ty == CHAR) *++e = LC;
+      if (d[Extent]) ; // array: address is the value
+      else if (ty == CHAR) *++e = LC;
       else if (ty == INT32) *++e = LI32;
       else if (ty > INT64 && ty < PTR) ; // struct value, keep address
       else *++e = LI;
@@ -263,10 +264,10 @@ void expr(int64_t lev)
     // For scalars (CHAR, INT32, INT64), add/sub 1
     if (ty > PTR) {
       base_ty = ty - PTR;
-      while (base_ty > PTR) base_ty = base_ty - PTR; // Remove all PTR layers
       if (base_ty == CHAR) *++e = sizeof(char);
       else if (base_ty == INT32) *++e = 4;
-      else *++e = sizeof(int64_t); // INT64
+      else if (base_ty > INT64 && base_ty < PTR) *++e = ((int64_t *)struct_syms[base_ty - INT64 - 1])[Val];
+      else *++e = sizeof(int64_t);
     } else {
       *++e = 1; // Scalar increment is always 1
     }
@@ -277,22 +278,25 @@ void expr(int64_t lev)
   }
   else { printf("%d: bad expression\n", (int)line); exit(-1); }
 
-  while (tk == '[' || tk == '.' || tk == Arrow) {
-    if (tk == '[') {
+  while (tk == Brak || tk == '.' || tk == Arrow) {
+    if (tk == Brak) {
+      t = ty; // save array/pointer type
       next();
-      if (*e == LC || *e == LI32 || *e == LI) *e = PSH; else { printf("%d: bad index\n", (int)line); exit(-1); }
+      if (*e == LC || *e == LI32 || *e == LI) *e = PSH; else *++e = PSH;
       expr(Assign);
       if (tk == ']') next(); else { printf("%d: close bracket expected\n", (int)line); exit(-1); }
-      if (ty > INT64) {
-        ty = ty - PTR;
-        *++e = IMM;
-        if (ty == CHAR) *++e = sizeof(char);
-        else if (ty == INT32) *++e = 4;
+      if (t > INT64) {
+        *++e = PSH; *++e = IMM;
+        elem_ty = t - PTR;
+        if (elem_ty == CHAR) *++e = sizeof(char);
+        else if (elem_ty == INT32) *++e = 4;
+        else if (elem_ty > INT64 && elem_ty < PTR) *++e = ((int64_t *)struct_syms[elem_ty - INT64 - 1])[Val];
         else *++e = sizeof(int64_t);
         *++e = MUL;
       }
       else { printf("%d: bad pointer in index\n", (int)line); exit(-1); }
       *++e = ADD;
+      ty = t - PTR;
       if (ty == CHAR) *++e = LC;
       else if (ty == INT32) *++e = LI32;
       else if (ty > INT64 && ty < PTR) ; // struct value in array
@@ -349,10 +353,11 @@ void expr(int64_t lev)
       next(); *++e = PSH; expr(Mul);
       if ((ty = t) > PTR) {
         *++e = PSH; *++e = IMM;
-        ty = ty - PTR; // Get element type
-        if (ty == CHAR) *++e = sizeof(char);
-        else if (ty == INT32) *++e = 4;
-        else *++e = sizeof(int64_t); // INT64 or pointers
+        elem_ty = ty - PTR;
+        if (elem_ty == CHAR) *++e = sizeof(char);
+        else if (elem_ty == INT32) *++e = 4;
+        else if (elem_ty > INT64 && elem_ty < PTR) *++e = ((int64_t *)struct_syms[elem_ty - INT64 - 1])[Val];
+        else *++e = sizeof(int64_t);
         *++e = MUL;
         ty = t; // Restore pointer type
       }
@@ -365,14 +370,16 @@ void expr(int64_t lev)
         elem_ty = t - PTR;
         if (elem_ty == CHAR) *++e = sizeof(char);
         else if (elem_ty == INT32) *++e = 4;
+        else if (elem_ty > INT64 && elem_ty < PTR) *++e = ((int64_t *)struct_syms[elem_ty - INT64 - 1])[Val];
         else *++e = sizeof(int64_t);
         *++e = DIV; ty = INT64;
       }
       else if ((ty = t) > PTR) {
         *++e = PSH; *++e = IMM;
-        ty = ty - PTR;
-        if (ty == CHAR) *++e = sizeof(char);
-        else if (ty == INT32) *++e = 4;
+        elem_ty = ty - PTR;
+        if (elem_ty == CHAR) *++e = sizeof(char);
+        else if (elem_ty == INT32) *++e = 4;
+        else if (elem_ty > INT64 && elem_ty < PTR) *++e = ((int64_t *)struct_syms[elem_ty - INT64 - 1])[Val];
         else *++e = sizeof(int64_t);
         *++e = MUL; *++e = SUB;
         ty = t;
@@ -388,16 +395,14 @@ void expr(int64_t lev)
       else if (*e == LI) { *e = PSH; *++e = LI; }
       else { printf("%d: bad lvalue in post-increment\n", (int)line); exit(-1); }
       *++e = PSH; *++e = IMM;
-      // For pointers, add/sub the size of pointed-to type
-      // For scalars (CHAR, INT32, INT64), add/sub 1
       if (ty > PTR) {
         base_ty = ty - PTR;
-        while (base_ty > PTR) base_ty = base_ty - PTR; // Remove all PTR layers
         if (base_ty == CHAR) *++e = sizeof(char);
         else if (base_ty == INT32) *++e = 4;
-        else *++e = sizeof(int64_t); // INT64
+        else if (base_ty > INT64 && base_ty < PTR) *++e = ((int64_t *)struct_syms[base_ty - INT64 - 1])[Val];
+        else *++e = sizeof(int64_t);
       } else {
-        *++e = 1; // Scalar increment is always 1
+        *++e = 1;
       }
       *++e = (tk == Inc) ? ADD : SUB;
       if (ty == CHAR) *++e = SC;
@@ -406,9 +411,9 @@ void expr(int64_t lev)
       *++e = PSH; *++e = IMM;
       if (ty > PTR) {
         base_ty = ty - PTR;
-        while (base_ty > PTR) base_ty = base_ty - PTR;
         if (base_ty == CHAR) *++e = sizeof(char);
         else if (base_ty == INT32) *++e = 4;
+        else if (base_ty > INT64 && base_ty < PTR) *++e = ((int64_t *)struct_syms[base_ty - INT64 - 1])[Val];
         else *++e = sizeof(int64_t);
       } else {
         *++e = 1;
@@ -424,6 +429,7 @@ void expr(int64_t lev)
         elem_ty = t - PTR;
         if (elem_ty == CHAR) *++e = sizeof(char);
         else if (elem_ty == INT32) *++e = 4;
+        else if (elem_ty > INT64 && elem_ty < PTR) *++e = ((int64_t *)struct_syms[elem_ty - INT64 - 1])[Val];
         else *++e = sizeof(int64_t);
         *++e = MUL;
       }
@@ -677,10 +683,21 @@ int main(int argc, char **argv)
             id[HClass] = id[Class]; id[Class] = Loc;
             id[HType]  = id[Type];  id[Type] = ty;
             id[HVal]   = id[Val];
-            if (ty > INT64 && ty < PTR) i = i + (((int64_t *)struct_syms[ty - INT64 - 1])[Val] + 7) / 8;
+            id[Extent] = 0;
+            next();
+            if (tk == Brak) {
+              next(); if (tk != Num) { printf("%d: bad array size\n", (int)line); return -1; }
+              id[Extent] = ival; next();
+              if (tk == ']') next(); else { printf("%d: close bracket expected\n", (int)line); return -1; }
+              if (ty == CHAR) i = i + (ival + 7) / 8;
+              else if (ty == INT32) i = i + (ival * 4 + 7) / 8;
+              else if (ty > INT64 && ty < PTR) i = i + (ival * ((int64_t *)struct_syms[ty - INT64 - 1])[Val] + 7) / 8;
+              else i = i + ival;
+              id[Type] = ty + PTR;
+            }
+            else if (ty > INT64 && ty < PTR) i = i + (((int64_t *)struct_syms[ty - INT64 - 1])[Val] + 7) / 8;
             else ++i;
             id[Val] = i;
-            next();
             if (tk == ',') next();
           }
           next();
@@ -701,7 +718,18 @@ int main(int argc, char **argv)
       else {
         id[Class] = Glo;
         id[Val] = (int64_t)data;
-        if (ty == CHAR) data = data + sizeof(char);
+        id[Extent] = 0;
+        if (tk == Brak) {
+          next(); if (tk != Num) { printf("%d: bad array size\n", (int)line); return -1; }
+          id[Extent] = ival; next();
+          if (tk == ']') next(); else { printf("%d: close bracket expected\n", (int)line); return -1; }
+          if (ty == CHAR) data = data + ival;
+          else if (ty == INT32) data = data + ival * 4;
+          else if (ty > INT64 && ty < PTR) data = data + ival * ((int64_t *)struct_syms[ty - INT64 - 1])[Val];
+          else data = data + ival * sizeof(int64_t);
+          id[Type] = ty + PTR;
+        }
+        else if (ty == CHAR) data = data + sizeof(char);
         else if (ty == INT32) data = data + 4;
         else if (ty > INT64 && ty < PTR) data = data + ((int64_t *)struct_syms[ty - INT64 - 1])[Val];
         else data = data + sizeof(int64_t);

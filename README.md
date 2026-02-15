@@ -3,10 +3,11 @@ c4 - C in four functions
 
 An exercise in minimalism.
 
-Try the following:
+Try the following 
+(If your system does not have "cc" use clang or gcc instead):
 
     mkdir -p build
-    gcc -o build/c4 c4.c
+    cc -o build/c4 c4.c
     ./build/c4 hello.c
     ./build/c4 -s hello.c
     
