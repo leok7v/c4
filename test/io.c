@@ -9,9 +9,11 @@ int main() {
 
   // Test 1: File Write (Create + Write)
   printf("--- Testing File I/O ---\n");
-  // O_CREAT (512) | O_TRUNC (1024) | O_WRONLY (1) = 1537
-  // Mode 0644 = 420
-  fd = open(filename, 1537, 420); 
+  // O_WRONLY | O_CREAT | O_TRUNC, mode 0644 = 420
+  // Linux:  1 | 64  | 512  = 577
+  // macOS:  1 | 512 | 1024 = 1537
+  fd = open(filename, 577, 420);
+  if (fd < 0) fd = open(filename, 1537, 420);
   if (fd < 0) { printf("Failed to open file for write\n"); return -1; }
   
   n = write(fd, "File content test\n", 18);
