@@ -112,32 +112,41 @@ All tests passing with clean exit codes (0):
 - ✅ Test suite passes: test/int32_64.c validates all features
 - ✅ **Output matches gcc exactly**
 
-**Known Issues**:
-1. **Self-compilation broken**: `./c4 c4.c` fails at line 142 because c4 doesn't recognize `INT` macro
-2. **Struct tests regression**: test/struct/simple.c segfaults (was working before int32_t changes)
-3. **Struct pointer test**: test/struct/ptr.c fails with "bad lvalue in assignment"
+**Implementation Status** (Feb 15, 2026):
+✅ Self-compilation works: `./c4 c4.c` succeeds
+✅ test/int32_64.c passes (all int32_t/int64_t operations work correctly)
+✅ test/struct/simple.c passes (basic struct member access with `.` operator)
+✅ CI/CD format warnings fixed (cast int64_t to (int) for printf %d)
+✅ CI/CD popen/pclose errors fixed (added _POSIX_C_SOURCE 200809L)
+✅ Infinite loop bug fixed (PTR stripping had no iteration limit for large StructIDs)
 
-**Next Steps** (prioritized):
-1. **Fix self-compilation** (PRIORITY 1):
-   - Remove `#define INT INT64` hack
-   - Replace all `int` with `int64_t` in c4.c source where size matters
-   - Use `int32_t` for printf %d compatibility 
-   - Make code "int-precision independent"
-   - This is mostly grep/replace work
+**Remaining Issues**:
+1. **test/struct/ptr.c fails**: Arrow operator (`->`) pointer detection broken
+   - Error: "not a struct pointer"
+   - Root cause: Cannot reliably distinguish StructID from StructID+PTR using alignment heuristic
+   - StructID values are ~5 billion (symbol table addresses)
+   - StructID+PTR = StructID+3, alignment check `(ty & 7) == 0` is unreliable
+   - **Attempted fixes that failed**:
+     - Iteration limit: both StructID and StructID+PTR take 100+ iterations to strip
+     - Alignment check: both may or may not be 8-byte aligned depending on allocator
+   - **Potential solutions**:
+     - Change type encoding to separate pointer flag from base type
+     - Use modulo arithmetic: `ty % (some_prime)` to encode pointer layers
+     - Track type metadata separately (breaks minimalist design)
 
-2. **Fix struct test regression** (PRIORITY 2):
-   - Debug why struct member access broke
-   - Issue: struct value detection logic `(ty > 100) && ((ty % PTR) != 0)` may be wrong
-   - Arrow operator needs fixing for new type system
+2. **GitHub CI still has warnings**:
+   - Format warnings on Linux (int64_t is `long`, not `long long`)
+   - Should use %ld instead of %lld, but self-compilation requires no casts
 
-3. **Update AGENTS.md** (PRIORITY 3):
-   - Document completed int32_t/int64_t implementation
-   - Move to "Completed Features" section
+**Next Steps**:
+1. **Fix struct pointer detection** (PRIORITY 1 - BLOCKED):
+   - Current type encoding: `StructID + n*PTR` cannot distinguish n=0 vs n>0 for large StructIDs
+   - Need fundamental design change or better heuristic
+   - Consider: check if `(ty - PTR) % 8 == 0` vs `ty % 8 == 0` (both StructID aligned)
 
-**Files Modified**:
-- c4.c: Type constants, opcodes, parser, VM execution (DONE)
-- test/int32_64.c: Comprehensive test (DONE)
-- Build flags: Can remove `-w` once self-compilation works
+2. **CI/CD format warnings** (PRIORITY 2):
+   - Linux uses %ld for int64_t, macOS/current setup uses %lld
+   - Options: suppress with -w flag, or use PRId64 macro (but c4 doesn't support complex macros)
 
 ### 2. Argv Support for Interpreted Programs (Priority: Low)
 - **Issue**: test/args.c currently skipped because c4 doesn't properly pass argv to interpreted programs.
