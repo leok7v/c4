@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Build c4 compiler
+      run: gcc -o c4 c4.c -O3 -m64 -std=c11 -Wall
+    
+    - name: Run struct tests
+      run: |
+        echo "=== Testing struct/simple.c ==="
+        ./c4 test/struct/simple.c
+        echo "=== Testing struct/ptr.c ==="
+        ./c4 test/struct/ptr.c
+        echo "=== Testing struct/nested.c ==="
+        ./c4 test/struct/nested.c
+    
+    - name: Run basic tests
+      run: |
+        echo "=== Testing args.c ==="
+        ./c4 test/args.c
+        echo "=== Testing io.c ==="
+        ./c4 test/io.c
+    
+    - name: Test self-compilation
+      run: |
+        echo "=== Self-compiling c4 ==="
+        ./c4 c4.c
+    
+    - name: Run all tests summary
+      run: |
+        failed=0
+        for test in test/struct/*.c; do
+          echo "Testing $test..."
+          if ! ./c4 "$test" > /dev/null 2>&1; then
+            echo "FAILED: $test"
+            failed=$((failed + 1))
+          fi
+        done
+        
+        if [ $failed -eq 0 ]; then
+          echo "✓ All struct tests passed!"
+        else
+          echo "✗ $failed test(s) failed"
+          exit 1
+        fi
