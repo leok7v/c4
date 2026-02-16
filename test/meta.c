@@ -16,7 +16,11 @@ int main() {
     code = "int main() { printf(\"Hello from generated code!\\n\"); return 42; }";
     
     printf("--- 1. Writing generated code to %s ---\n", filename);
-    fd = open(filename, 1537, 420); // O_CREAT|O_TRUNC|O_WRONLY, 0644
+    // O_WRONLY | O_CREAT | O_TRUNC, mode 0644 = 420
+    // Linux:  1 | 64  | 512  = 577
+    // macOS:  1 | 512 | 1024 = 1537
+    fd = open(filename, 577, 420);
+    if (fd < 0) fd = open(filename, 1537, 420);
     if (fd < 0) {
         printf("Failed to create file\n");
         return -1;

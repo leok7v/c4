@@ -25,8 +25,10 @@ jobs:
     
     - name: Run tests
       run: |
+        set +e
         output=$(build/c4 test/test.c 2>&1)
         exit_code=$?
+        set -e
         echo "$output"
         summary_line=$(echo "$output" | grep 'SUMMARY:' | tail -1)
         if [ -n "$summary_line" ]; then
@@ -36,9 +38,9 @@ jobs:
         else
           failed=1  # No summary = failure
         fi
-        if [ $failed -eq 0 ] && [ $exit_code -eq 0 ]; then
+        if [ "$failed" -eq 0 ] && [ "$exit_code" -eq 0 ]; then
           echo "All tests passed!"
         else
-          echo "$failed test(s) failed"
+          echo "$failed test(s) failed (exit_code=$exit_code)"
           exit 1
         fi
