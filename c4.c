@@ -30,7 +30,15 @@ int64_t *e, *le,  // current position in emitted code
     line,     // current line number
     src,      // print source and assembly flag
     debug,    // print executed instructions
-    num_structs; // number of defined structs
+    num_structs, // number of defined structs
+    members_next; // members_pool allocation index
+
+int64_t sym_pool[32768];
+int64_t code_pool[32768];
+int64_t stack_pool[32768];
+char src_pool[262144];
+int64_t struct_syms_arr[256];
+int64_t members_pool[4096];
 
 // tokens and classes (operators last and in precedence order)
 enum {
@@ -515,15 +523,15 @@ int main(int argc, char **argv)
   if ((fd = open(*argv, 0)) < 0) { printf("could not open(%s)\n", *argv); return -1; }
 
   poolsz = 256*1024; // arbitrary size
-  if (!(sym = malloc(poolsz))) { printf("could not malloc(%d) symbol area\n", (int)poolsz); return -1; }
-  if (!(le = e = malloc(poolsz))) { printf("could not malloc(%d) text area\n", (int)poolsz); return -1; }
-  if (!(data = malloc(poolsz))) { printf("could not malloc(%d) data area\n", (int)poolsz); return -1; }
-  if (!(sp = malloc(poolsz))) { printf("could not malloc(%d) stack area\n", (int)poolsz); return -1; }
-  if (!(struct_syms = malloc(256 * sizeof(int64_t)))) { printf("could not malloc struct_syms\n"); return -1; }
+  sym = sym_pool;
+  le = e = code_pool;
+  if (!(data = malloc(poolsz * 8))) { printf("could not malloc(%d) data area\n", (int)(poolsz * 8)); return -1; }
+  sp = stack_pool;
+  struct_syms = struct_syms_arr;
 
   memset(sym,  0, poolsz);
   memset(e,    0, poolsz);
-  memset(data, 0, poolsz);
+  memset(data, 0, poolsz * 8);
   memset(struct_syms, 0, 256 * sizeof(int64_t));
 
   p = "char else enum if int int32_t int64_t return sizeof struct typedef union while "
@@ -534,7 +542,7 @@ int main(int argc, char **argv)
   next(); id[Tk] = Char; // handle void type
   next(); idmain = id; // keep track of main
 
-  if (!(lp = p = malloc(poolsz))) { printf("could not malloc(%d) source area\n", (int)poolsz); return -1; }
+  lp = p = src_pool;
   if ((i = read(fd, p, poolsz-1)) <= 0) { printf("read() returned %d\n", (int)i); return -1; }
   p[i] = 0;
   close(fd);
@@ -610,8 +618,8 @@ int main(int argc, char **argv)
             if (tk != Id) { printf("%d: bad struct member declaration\n", (int)line); return -1; }
             if (id[Class] == Loc) { printf("%d: duplicate struct member definition\n", (int)line); return -1; }
             
-            m = malloc(4 * sizeof(int64_t));
-            if (!m) { printf("%d: could not malloc member\n", (int)line); return -1; }
+            m = members_pool + members_next;
+            members_next = members_next + 4;
             m[0] = id[Hash];
             m[1] = ty;
             // align offset before member

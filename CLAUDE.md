@@ -21,7 +21,7 @@ c4.c must be valid c4 input. This means:
 - No `for`, `do`, `switch`, `unsigned`, `float`, `double`
 - No `&&` or `||` short-circuit in variable declarations
 - printf limited to 5 data arguments (format + 5 = 6 total args)
-- After changing c4.c, always verify: `timeout 10 ./build/c4 c4.c test/struct/simple.c`
+- After changing c4.c, always verify: `timeout 10 ./build/c4 c4.c test/struct_simple.c`
 
 ## Key Implementation Details
 - `memacc()` handles both `.` and `->` member access (shared code)
@@ -35,8 +35,8 @@ c4.c must be valid c4 input. This means:
 ```sh
 clang -o build/c4 c4.c -O3 -m64 -std=c11 -Wall    # build
 ./build/c4 test/grok.c                               # direct test
-timeout 10 ./build/c4 c4.c test/struct/simple.c      # self-compilation test
-cc test/grok.c -o /tmp/grok && /tmp/grok             # cross-check with system compiler
+timeout 10 ./build/c4 c4.c test/struct_simple.c       # self-compilation test
+cc test/grok.c -o ./tmp/grok && ./tmp/grok            # cross-check with system compiler
 ```
 
 ## Test Files
@@ -44,7 +44,7 @@ All test files have `#include` headers so they compile with both c4 and cc/gcc/c
 - test/grok.c — padding, sizeof(struct), cast, struct ptr arith
 - test/arrays.c — all array types including struct arrays
 - test/struct_ptr_arith.c — pointer arithmetic, pre/post increment
-- test/struct/{simple,ptr,nested}.c — basic struct operations
+- test/struct_simple.c, test/struct_nested.c — basic struct operations
 - test/int32_64.c — int32_t/int64_t operations
 - test/io.c — file I/O (open/read/write)
 - test/test.c — test runner (discovers and runs all tests)

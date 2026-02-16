@@ -16,46 +16,29 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     
-    - name: Build c4 compiler
-      run: clang -o c4 c4.c -O3 -m64 -std=c11 -w
-    
     - name: Create build directory
       run: mkdir -p build
+
+    - name: Build c4 compiler
+      run: clang -o build/c4 c4.c -O3 -m64 -std=c11 -w
     
-    - name: Run struct tests
-      run: |
-        echo "=== Testing struct/simple.c ==="
-        ./c4 test/struct/simple.c
-        echo "=== Testing struct/ptr.c ==="
-        ./c4 test/struct/ptr.c
-        echo "=== Testing struct/nested.c ==="
-        ./c4 test/struct/nested.c
     
-    - name: Run basic tests
+    - name: Run tests
       run: |
-        echo "=== Testing io.c ==="
-        ./c4 test/io.c
-        echo "Note: args.c skipped - c4 doesn't properly support argv for interpreted programs"
-    
-    - name: Test self-compilation
-      run: |
-        echo "=== Self-compiling c4 and running struct test ==="
-        ./c4 c4.c test/struct/simple.c
-    
-    - name: Run all tests summary
-      run: |
-        failed=0
-        for test in test/struct/*.c; do
-          echo "Testing $test..."
-          if ! ./c4 "$test" > /dev/null 2>&1; then
-            echo "FAILED: $test"
-            failed=$((failed + 1))
-          fi
-        done
-        
-        if [ $failed -eq 0 ]; then
-          echo "✓ All struct tests passed!"
+        output=$(build/c4 test/test.c 2>&1)
+        exit_code=$?
+        echo "$output"
+        summary_line=$(echo "$output" | grep 'SUMMARY:' | tail -1)
+        if [ -n "$summary_line" ]; then
+          passed=$(echo "$summary_line" | awk -F'[ /]' '{print $2}')
+          total=$(echo "$summary_line" | awk -F'[ /]' '{print $3}')
+          failed=$((total - passed))
         else
-          echo "✗ $failed test(s) failed"
+          failed=1  # No summary = failure
+        fi
+        if [ $failed -eq 0 ] && [ $exit_code -eq 0 ]; then
+          echo "All tests passed!"
+        else
+          echo "$failed test(s) failed"
           exit 1
         fi
