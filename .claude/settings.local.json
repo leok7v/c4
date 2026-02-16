@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(clang:*)",
+      "Bash(cc:*)",
+      "Bash(gcc:*)",
+      "Bash(./build/c4:*)",
+      "Bash(./tmp/*)",
+      "Bash(timeout:*)",
+      "Bash(mkdir:*)",
+      "Bash(ls:*)",
+      "Bash(gh:*)",
+      "Bash(git:*)",
+      "Bash(system:*)"
+    ]
+  }
+}
