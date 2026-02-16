@@ -2,38 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-int strlen(char *s) {
-    int n;
-    n = 0;
-    while (*s) { n++; s++; }
-    return n;
-}
-
-int strcmp(char *s1, char *s2) {
-    while(*s1 && (*s1 == *s2)) {
-        s1++; s2++;
-    }
-    return *s1 - *s2;
-}
-
-int strncmp(char *s1, char *s2, int n) {
-    if (n == 0) return 0;
-    while (n-- && *s1 && *s2 && *s1 == *s2) { s1++; s2++; }
-    if (n < 0) return 0;
-    return *s1 - *s2;
-}
-
-void strcpy(char *d, char *s) {
-    while (*s) *d++ = *s++;
-    *d = 0;
-}
-
-void strcat(char *d, char *s) {
-    while (*d) d++;
-    while (*s) *d++ = *s++;
-    *d = 0;
-}
-
 int run_test(char *filename) {
     char *cmd;
     int status;

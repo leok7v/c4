@@ -2,16 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
-
-int strlen(char *s) {
-    int n;
-    n = 0;
-    while (*s) {
-        n++;
-        s++;
-    }
-    return n;
-}
+#include <string.h>
 
 int main() {
     int fd;

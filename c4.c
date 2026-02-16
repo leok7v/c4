@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <string.h>
 
 char *p, *lp, // current position in source code
      *data;   // data/bss pointer
@@ -41,7 +42,7 @@ enum {
 // opcodes
 enum { LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,LI32,SI  ,SC  ,SI32,PSH ,
        OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,
-       OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,EXIT,WRIT,SYST,POPN,PCLS,FRED };
+       OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,EXIT,WRIT,SYST,POPN,PCLS,FRED,MCPY,MMOV,SCPY,SCMP,SLEN,SCAT,SNCM };
 
 // types
 enum { CHAR, INT32, INT64, PTR = 256 };
@@ -62,7 +63,8 @@ void next()
         while (le < e) {
           printf("%8.4s", &"LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,LI32,SI  ,SC  ,SI32,PSH ,"
                            "OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,"
-                           "OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,EXIT,WRIT,SYST,POPN,PCLS,FRED,"[*++le * 5]);
+                           "OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,EXIT,WRIT,SYST,POPN,PCLS,FRED,"
+                           "MCPY,MMOV,SCPY,SCMP,SLEN,SCAT,SNCM,"[*++le * 5]);
           if (*le <= ADJ) printf(" %lld\n", *++le); else printf("\n");
         }
       }
@@ -525,9 +527,10 @@ int main(int argc, char **argv)
   memset(struct_syms, 0, 256 * sizeof(int64_t));
 
   p = "char else enum if int int32_t int64_t return sizeof struct typedef union while "
-      "open read close printf malloc free memset memcmp exit write system popen pclose fread void main";
+      "open read close printf malloc free memset memcmp exit write system popen pclose fread "
+      "memcpy memmove strcpy strcmp strlen strcat strncmp void main";
   i = Char; while (i <= While) { next(); id[Tk] = i++; } // add keywords to symbol table
-  i = OPEN; while (i <= FRED) { next(); id[Class] = Sys; id[Type] = INT64; id[Val] = i++; } // add library to symbol table
+  i = OPEN; while (i <= SNCM) { next(); id[Class] = Sys; id[Type] = INT64; id[Val] = i++; } // add library to symbol table
   next(); id[Tk] = Char; // handle void type
   next(); idmain = id; // keep track of main
 
@@ -764,7 +767,8 @@ int main(int argc, char **argv)
       printf("%lld> %.4s", cycle,
         &"LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,LI32,SI  ,SC  ,SI32,PSH ,"
          "OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,"
-         "OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,EXIT,WRIT,SYST,POPN,PCLS,FRED,"[i * 5]);
+         "OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,EXIT,WRIT,SYST,POPN,PCLS,FRED,"
+         "MCPY,MMOV,SCPY,SCMP,SLEN,SCAT,SNCM,"[i * 5]);
       if (i <= ADJ) printf(" %lld\n", *pc); else printf("\n");
     }
     if      (i == LEA) a = (int64_t)(bp + *pc++);                             // load local address
@@ -815,6 +819,13 @@ int main(int argc, char **argv)
     else if (i == POPN) a = (int64_t)popen((char *)sp[1], (char *)*sp);
     else if (i == PCLS) a = pclose((void *)*sp);
     else if (i == FRED) a = fread((void *)sp[3], sp[2], sp[1], (void *)*sp);
+    else if (i == MCPY) a = (int64_t)memcpy((char *)sp[2], (char *)sp[1], *sp);
+    else if (i == MMOV) a = (int64_t)memmove((char *)sp[2], (char *)sp[1], *sp);
+    else if (i == SCPY) a = (int64_t)strcpy((char *)sp[1], (char *)*sp);
+    else if (i == SCMP) a = strcmp((char *)sp[1], (char *)*sp);
+    else if (i == SLEN) a = strlen((char *)*sp);
+    else if (i == SCAT) a = (int64_t)strcat((char *)sp[1], (char *)*sp);
+    else if (i == SNCM) a = strncmp((char *)sp[2], (char *)sp[1], *sp);
     else { printf("unknown instruction = %lld! cycle = %lld\n", i, cycle); return -1; }
   }
 }
