@@ -47,6 +47,7 @@ All test files have `#include` headers so they compile with both c4 and cc/gcc/c
 - test/struct_simple.c, test/struct_nested.c — basic struct operations
 - test/int32_64.c — int32_t/int64_t operations
 - test/io.c — file I/O (open/read/write)
+- test/scope.c — block-scoped declarations, init-in-declaration, (void) params
 - test/test.c — test runner (discovers and runs all tests)
 
 ## CI

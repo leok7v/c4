@@ -31,14 +31,17 @@ int64_t *e, *le,  // current position in emitted code
     src,      // print source and assembly flag
     debug,    // print executed instructions
     num_structs, // number of defined structs
-    members_next; // members_pool allocation index
+    members_next, // members_pool allocation index
+    i,        // multipurpose counter / local offset
+    scope_sp; // scope stack pointer
 
 int64_t sym_pool[32768];
 int64_t code_pool[32768];
 int64_t stack_pool[32768];
-char src_pool[262144];
+char* src_pool;
 int64_t struct_syms_arr[256];
 int64_t members_pool[4096];
+int64_t scope_stack[1024];
 
 // tokens and classes (operators last and in precedence order)
 enum {
@@ -461,7 +464,7 @@ void expr(int64_t lev)
 
 void stmt()
 {
-  int64_t *a, *b;
+  int64_t *a, *b, *d, mark, bt;
 
   if (tk == If) {
     next();
@@ -496,7 +499,70 @@ void stmt()
   }
   else if (tk == '{') {
     next();
+    mark = scope_sp;
+    while (tk == Int || tk == Int32_t || tk == Int64_t || tk == Char || tk == Struct) {
+      if (tk == Struct) {
+        next();
+        if (tk != Id) { printf("%d: bad struct declaration\n", (int)line); exit(-1); }
+        if (id[Class] == Struct) bt = id[Type]; else { printf("%d: not a struct\n", (int)line); exit(-1); }
+        next();
+      } else {
+        bt = INT64;
+        if (tk == Int) next();
+        else if (tk == Int32_t) { next(); bt = INT32; }
+        else if (tk == Int64_t) { next(); bt = INT64; }
+        else if (tk == Char) { next(); bt = CHAR; }
+        else next();
+      }
+      while (tk != ';') {
+        ty = bt;
+        while (tk == Mul) { next(); ty = ty + PTR; }
+        if (tk != Id) { printf("%d: bad local declaration\n", (int)line); exit(-1); }
+        scope_stack[scope_sp] = (int64_t)id;
+        scope_stack[scope_sp + 1] = id[Class];
+        scope_stack[scope_sp + 2] = id[Type];
+        scope_stack[scope_sp + 3] = id[Val];
+        scope_stack[scope_sp + 4] = id[Extent];
+        scope_sp = scope_sp + 5;
+        id[Class] = Loc;
+        id[Type] = ty;
+        id[Extent] = 0;
+        next();
+        if (tk == Brak) {
+          next(); if (tk != Num) { printf("%d: bad array size\n", (int)line); exit(-1); }
+          id[Extent] = ival; next();
+          if (tk == ']') next(); else { printf("%d: close bracket expected\n", (int)line); exit(-1); }
+          if (ty == CHAR) i = i + (ival + 7) / 8;
+          else if (ty == INT32) i = i + (ival * 4 + 7) / 8;
+          else if (ty > INT64 && ty < PTR) i = i + (ival * ((int64_t *)struct_syms[ty - INT64 - 1])[Val] + 7) / 8;
+          else i = i + ival;
+          id[Type] = ty + PTR;
+        }
+        else if (ty > INT64 && ty < PTR) i = i + (((int64_t *)struct_syms[ty - INT64 - 1])[Val] + 7) / 8;
+        else ++i;
+        id[Val] = i;
+        if (tk == Assign) {
+          d = id;
+          next();
+          *++e = LEA; *++e = loc - d[Val]; *++e = PSH;
+          expr(Assign);
+          if (d[Type] == CHAR) *++e = SC;
+          else if (d[Type] == INT32) *++e = SI32;
+          else *++e = SI;
+        }
+        if (tk == ',') next();
+      }
+      next();
+    }
     while (tk != '}') stmt();
+    while (scope_sp > mark) {
+      scope_sp = scope_sp - 5;
+      id = (int64_t *)scope_stack[scope_sp];
+      id[Class] = scope_stack[scope_sp + 1];
+      id[Type] = scope_stack[scope_sp + 2];
+      id[Val] = scope_stack[scope_sp + 3];
+      id[Extent] = scope_stack[scope_sp + 4];
+    }
     next();
   }
   else if (tk == ';') {
@@ -510,9 +576,9 @@ void stmt()
 
 int main(int argc, char **argv)
 {
-  int64_t fd, bt, ty, poolsz, *idmain, *s, *m;
+  int64_t fd, bt, ty, poolsz, *idmain, *s, *m, *d;
   int64_t *pc, *sp, *bp, a, cycle;
-  int64_t i, *t;
+  int64_t *t;
 
   --argc; ++argv;
   if (argc > 0 && **argv == '-' && (*argv)[1] == 's') { src = 1; --argc; ++argv; }
@@ -522,10 +588,11 @@ int main(int argc, char **argv)
 
   if ((fd = open(*argv, 0)) < 0) { printf("could not open(%s)\n", *argv); return -1; }
 
-  poolsz = 256*1024; // arbitrary size
+  poolsz = 256 * 1024; // arbitrary large size
   sym = sym_pool;
   le = e = code_pool;
   if (!(data = malloc(poolsz * 8))) { printf("could not malloc(%d) data area\n", (int)(poolsz * 8)); return -1; }
+  if (!(src_pool = malloc(poolsz * 8))) { printf("could not malloc(%d) src_pool area\n", (int)(poolsz * 8)); return -1; }
   sp = stack_pool;
   struct_syms = struct_syms_arr;
 
@@ -661,19 +728,22 @@ int main(int argc, char **argv)
           else if (tk == Int32_t) { next(); ty = INT32; }
           else if (tk == Int64_t) { next(); ty = INT64; }
           else if (tk == Char) { next(); ty = CHAR; }
-          while (tk == Mul) { next(); ty = ty + PTR; }
-          if (tk != Id) { printf("%d: bad parameter declaration\n", (int)line); return -1; }
-          if (id[Class] == Loc) { printf("%d: duplicate parameter definition\n", (int)line); return -1; }
-          id[HClass] = id[Class]; id[Class] = Loc;
-          id[HType]  = id[Type];  id[Type] = ty;
-          id[HVal]   = id[Val];   id[Val] = i++;
-          next();
-          if (tk == ',') next();
+          if (tk != ')') { // not (void)
+            while (tk == Mul) { next(); ty = ty + PTR; }
+            if (tk != Id) { printf("%d: bad parameter declaration\n", (int)line); return -1; }
+            if (id[Class] == Loc) { printf("%d: duplicate parameter definition\n", (int)line); return -1; }
+            id[HClass] = id[Class]; id[Class] = Loc;
+            id[HType]  = id[Type];  id[Type] = ty;
+            id[HVal]   = id[Val];   id[Val] = i++;
+            next();
+            if (tk == ',') next();
+          }
         }
         next();
         if (tk != '{') { printf("%d: bad function definition\n", (int)line); return -1; }
         loc = ++i;
         next();
+        *++e = ENT; t = ++e; // placeholder for ENT operand
         while (tk == Int || tk == Int32_t || tk == Int64_t || tk == Char || tk == Struct) {
           if (tk == Struct) {
             next();
@@ -715,12 +785,21 @@ int main(int argc, char **argv)
             else if (ty > INT64 && ty < PTR) i = i + (((int64_t *)struct_syms[ty - INT64 - 1])[Val] + 7) / 8;
             else ++i;
             id[Val] = i;
+            if (tk == Assign) {
+              d = id;
+              next();
+              *++e = LEA; *++e = loc - d[Val]; *++e = PSH;
+              expr(Assign);
+              if (d[Type] == CHAR) *++e = SC;
+              else if (d[Type] == INT32) *++e = SI32;
+              else *++e = SI;
+            }
             if (tk == ',') next();
           }
           next();
         }
-        *++e = ENT; *++e = i - loc;
         while (tk != '}') stmt();
+        *t = i - loc; // patch ENT operand (includes block locals)
         *++e = LEV;
         id = sym; // unwind symbol table locals
         while (id[Tk]) {
