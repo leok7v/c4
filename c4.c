@@ -1132,11 +1132,11 @@ void stmt() {
         brk_sp = saved_brk_sp;
         while (scope_sp > for_scope_mark) {
             scope_sp = scope_sp - 5;
-            id = (int64_t *)scope_stack[scope_sp];
-            id[Class] = scope_stack[scope_sp + 1];
-            id[Type] = scope_stack[scope_sp + 2];
-            id[Val] = scope_stack[scope_sp + 3];
-            id[Extent] = scope_stack[scope_sp + 4];
+            d = (int64_t *)scope_stack[scope_sp];
+            d[Class] = scope_stack[scope_sp + 1];
+            d[Type] = scope_stack[scope_sp + 2];
+            d[Val] = scope_stack[scope_sp + 3];
+            d[Extent] = scope_stack[scope_sp + 4];
         }
     } else if (tk == Do) {
         next();
