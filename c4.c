@@ -47,8 +47,9 @@ int64_t scope_stack[1024];
 enum {
     Num = 128, Fun, Sys, Glo, Loc, Id,
     Char, Else, Enum, If, Int, Int32_t, Int64_t, Return, Sizeof, Struct,
-    Typedef, Union, While, Assign, Cond, Lor, Lan, Or, Xor, And, Eq, Ne, Lt,
-    Gt, Le, Ge, Shl, Shr, Add, Sub, Mul, Div, Mod, Inc, Dec, Brak, Arrow
+    Typedef, Union, While, Switch, Case, Default, Break, Assign, Cond, Lor,
+    Lan, Or, Xor, And, Eq, Ne, Lt, Gt, Le, Ge, Shl, Shr, Add, Sub, Mul, Div,
+    Mod, Inc, Dec, Brak, Arrow
 };
 
 // opcodes
@@ -56,7 +57,7 @@ enum {
     LEA, IMM, JMP, JSR, BZ, BNZ, ENT, ADJ, LEV, LI, LC, LI32, SI, SC, SI32,
     PSH, OR, XOR, AND, EQ, NE, LT, GT, LE, GE, SHL, SHR, ADD, SUB, MUL, DIV,
     MOD, OPEN, READ, CLOS, PRTF, MALC, FREE, MSET, MCMP, EXIT, WRIT, SYST,
-    POPN, PCLS, FRED, MCPY, MMOV, SCPY, SCMP, SLEN, SCAT, SNCM
+    POPN, PCLS, FRED, MCPY, MMOV, SCPY, SCMP, SLEN, SCAT, SNCM, DUP
 };
 
 // types
@@ -84,7 +85,7 @@ void next() {
                                      "GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,"
                                      "OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,"
                                      "EXIT,WRIT,SYST,POPN,PCLS,FRED,MCPY,MMOV,"
-                                     "SCPY,SCMP,SLEN,SCAT,SNCM,"[*++le * 5]);
+                                     "SCPY,SCMP,SLEN,SCAT,SNCM,DUP ,"[i * 5]);
                     if (*le <= ADJ) {
                         printf(" %lld\n", *++le);
                     } else {
@@ -937,7 +938,9 @@ void expr(int64_t lev) {
 }
 
 void stmt() {
-    int64_t *a, *b, *d, mark, bt;
+    int64_t *a, *b, *d, mark, bt, *break_stack[256], **break_sp;
+
+    break_sp = break_stack;
 
     if (tk == If) {
         next();
@@ -987,6 +990,91 @@ void stmt() {
         *++e = JMP;
         *++e = (int64_t)a;
         *b = (int64_t)(e + 1);
+    } else if (tk == Switch) {
+        next();
+        if (tk == '(') {
+            next();
+        } else {
+            printf("%d: open paren expected\n", (int)line);
+            exit(-1);
+        }
+        expr(Assign);
+        if (tk == ')') {
+            next();
+        } else {
+            printf("%d: close paren expected\n", (int)line);
+            exit(-1);
+        }
+
+        *++e = DUP;
+
+        if (tk == '{') {
+            next();
+        } else {
+            printf("%d: open brace expected\n", (int)line);
+            exit(-1);
+        }
+
+        b = 0;
+
+        while (tk != '}') {
+            if (tk == Case) {
+                if (b) {
+                    *b = (int64_t)(e + 1);
+                }
+                next();
+                if (tk != Num) {
+                    printf("%d: number expected\n", (int)line);
+                    exit(-1);
+                }
+                *++e = IMM;
+                *++e = ival;
+                *++e = EQ;
+                *++e = BZ;
+                b = ++e;
+                next();
+                if (tk == ':') {
+                    next();
+                } else {
+                    printf("%d: colon expected\n", (int)line);
+                    exit(-1);
+                }
+            } else if (tk == Default) {
+                if (b) {
+                    *b = (int64_t)(e + 1);
+                }
+                next();
+                if (tk == ':') {
+                    next();
+                } else {
+                    printf("%d: colon expected\n", (int)line);
+                    exit(-1);
+                }
+                b = 0;
+            } else if (tk == Break) {
+                next();
+                if (tk == ';') {
+                    next();
+                } else {
+                    printf("%d: semicolon expected\n", (int)line);
+                    exit(-1);
+                }
+                *++e = JMP;
+                *break_sp++ = ++e;
+            } else {
+                stmt();
+            }
+        }
+        next();
+        if (b) {
+            *b = (int64_t)(e + 1);
+        }
+        while (break_sp > break_stack) {
+            **--break_sp = (int64_t)(e + 1);
+        }
+        *++e = ADJ;
+        *++e = 1;
+
     } else if (tk == Return) {
         next();
         if (tk != ';') {
@@ -1181,11 +1269,11 @@ int main(int argc, char **argv) {
     memset(struct_syms, 0, 256 * sizeof(int64_t));
 
     p = "char else enum if int int32_t int64_t return sizeof struct typedef "
-        "union while open read close printf malloc free memset memcmp exit "
-        "write system popen pclose fread memcpy memmove strcpy strcmp strlen "
-        "strcat strncmp void main";
+        "union while switch case default break open read close printf malloc "
+        "free memset memcmp exit write system popen pclose fread memcpy "
+        "memmove strcpy strcmp strlen strcat strncmp void main";
     i = Char;
-    while (i <= While) {
+    while (i <= Break) {
         next();
         id[Tk] = i++;
     } // add keywords to symbol table
@@ -1747,6 +1835,9 @@ int main(int argc, char **argv) {
             a = (int64_t)strcat((char *)sp[1], (char *)*sp);
         } else if (i == SNCM) {
             a = strncmp((char *)sp[2], (char *)sp[1], *sp);
+        } else if (i == DUP) {
+            *--sp = a;
+            *--sp = a;
         } else {
             printf("unknown instruction = %lld! cycle = %lld\n", i, cycle);
             return -1;
