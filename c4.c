@@ -42,12 +42,17 @@ char* src_pool;
 int64_t struct_syms_arr[256];
 int64_t members_pool[4096];
 int64_t scope_stack[1024];
+int64_t brk_patches[512];
+int64_t cnt_patches[512];
+int64_t brk_sp;
+int64_t cnt_sp;
 
 // tokens and classes (operators last and in precedence order)
 enum {
     Num = 128, Fun, Sys, Glo, Loc, Id,
     Char, Else, Enum, If, Int, Int32_t, Int64_t, Return, Sizeof, Struct,
-    Typedef, Union, While, Switch, Case, Default, Break, Assign, Cond, Lor,
+    Typedef, Union, While, For, Do, Switch, Case, Default, Break, Continue,
+    Assign, Cond, Lor,
     Lan, Or, Xor, And, Eq, Ne, Lt, Gt, Le, Ge, Shl, Shr, Add, Sub, Mul, Div,
     Mod, Inc, Dec, Brak, Arrow
 };
@@ -939,6 +944,9 @@ void expr(int64_t lev) {
 
 void stmt() {
     int64_t *a, *b, *d, mark, bt, *break_stack[256], **break_sp;
+    int64_t saved_brk_sp, saved_cnt_sp, for_scope_mark, inc_len, inc_top, j;
+    int64_t *inc_e;
+    int64_t inc_buf[128];
 
     break_sp = break_stack;
 
@@ -986,10 +994,190 @@ void stmt() {
         }
         *++e = BZ;
         b = ++e;
+        saved_brk_sp = brk_sp;
+        saved_cnt_sp = cnt_sp;
         stmt();
         *++e = JMP;
         *++e = (int64_t)a;
         *b = (int64_t)(e + 1);
+        j = saved_cnt_sp;
+        while (j < cnt_sp) { *(int64_t *)cnt_patches[j] = (int64_t)a; j = j + 1; }
+        j = saved_brk_sp;
+        while (j < brk_sp) { *(int64_t *)brk_patches[j] = (int64_t)(e + 1); j = j + 1; }
+        cnt_sp = saved_cnt_sp;
+        brk_sp = saved_brk_sp;
+    } else if (tk == For) {
+        next();
+        if (tk == '(') {
+            next();
+        } else {
+            printf("%d: open paren expected\n", (int)line);
+            exit(-1);
+        }
+        for_scope_mark = scope_sp;
+        if (tk == Int || tk == Int32_t || tk == Int64_t || tk == Char) {
+            bt = INT64;
+            if (tk == Int) {
+                next();
+            } else if (tk == Int32_t) {
+                next();
+                bt = INT32;
+            } else if (tk == Int64_t) {
+                next();
+                bt = INT64;
+            } else if (tk == Char) {
+                next();
+                bt = CHAR;
+            }
+            ty = bt;
+            while (tk == Mul) { next(); ty = ty + PTR; }
+            if (tk != Id) {
+                printf("%d: bad for declaration\n", (int)line);
+                exit(-1);
+            }
+            scope_stack[scope_sp] = (int64_t)id;
+            scope_stack[scope_sp + 1] = id[Class];
+            scope_stack[scope_sp + 2] = id[Type];
+            scope_stack[scope_sp + 3] = id[Val];
+            scope_stack[scope_sp + 4] = id[Extent];
+            scope_sp = scope_sp + 5;
+            id[Class] = Loc;
+            id[Type] = ty;
+            id[Extent] = 0;
+            ++i;
+            id[Val] = i;
+            next();
+            if (tk == Assign) {
+                d = id;
+                next();
+                *++e = LEA;
+                *++e = loc - d[Val];
+                *++e = PSH;
+                expr(Assign);
+                if (d[Type] == CHAR) {
+                    *++e = SC;
+                } else if (d[Type] == INT32) {
+                    *++e = SI32;
+                } else {
+                    *++e = SI;
+                }
+            }
+            if (tk == ';') {
+                next();
+            } else {
+                printf("%d: semicolon expected\n", (int)line);
+                exit(-1);
+            }
+        } else if (tk != ';') {
+            expr(Assign);
+            if (tk == ';') {
+                next();
+            } else {
+                printf("%d: semicolon expected\n", (int)line);
+                exit(-1);
+            }
+        } else {
+            next();
+        }
+        a = e + 1;
+        if (tk != ';') {
+            expr(Assign);
+        } else {
+            *++e = IMM;
+            *++e = 1;
+        }
+        if (tk == ';') {
+            next();
+        } else {
+            printf("%d: semicolon expected\n", (int)line);
+            exit(-1);
+        }
+        *++e = BZ;
+        b = ++e;
+        inc_e = e + 1;
+        if (tk != ')') {
+            expr(Assign);
+            inc_len = e - inc_e + 1;
+            if (inc_len > 128) {
+                printf("%d: for increment too complex\n", (int)line);
+                exit(-1);
+            }
+            memcpy(inc_buf, inc_e, inc_len * 8);
+            e = inc_e - 1;
+        } else {
+            inc_len = 0;
+        }
+        if (tk == ')') {
+            next();
+        } else {
+            printf("%d: close paren expected\n", (int)line);
+            exit(-1);
+        }
+        saved_brk_sp = brk_sp;
+        saved_cnt_sp = cnt_sp;
+        stmt();
+        inc_top = (int64_t)(e + 1);
+        if (inc_len) {
+            memcpy(e + 1, inc_buf, inc_len * 8);
+            e = e + inc_len;
+        }
+        *++e = JMP;
+        *++e = (int64_t)a;
+        *b = (int64_t)(e + 1);
+        j = saved_cnt_sp;
+        while (j < cnt_sp) { *(int64_t *)cnt_patches[j] = inc_top; j = j + 1; }
+        j = saved_brk_sp;
+        while (j < brk_sp) { *(int64_t *)brk_patches[j] = (int64_t)(e + 1); j = j + 1; }
+        cnt_sp = saved_cnt_sp;
+        brk_sp = saved_brk_sp;
+        while (scope_sp > for_scope_mark) {
+            scope_sp = scope_sp - 5;
+            id = (int64_t *)scope_stack[scope_sp];
+            id[Class] = scope_stack[scope_sp + 1];
+            id[Type] = scope_stack[scope_sp + 2];
+            id[Val] = scope_stack[scope_sp + 3];
+            id[Extent] = scope_stack[scope_sp + 4];
+        }
+    } else if (tk == Do) {
+        next();
+        a = e + 1;
+        saved_brk_sp = brk_sp;
+        saved_cnt_sp = cnt_sp;
+        stmt();
+        if (tk == While) {
+            next();
+        } else {
+            printf("%d: while expected after do\n", (int)line);
+            exit(-1);
+        }
+        if (tk == '(') {
+            next();
+        } else {
+            printf("%d: open paren expected\n", (int)line);
+            exit(-1);
+        }
+        inc_top = (int64_t)(e + 1);
+        expr(Assign);
+        if (tk == ')') {
+            next();
+        } else {
+            printf("%d: close paren expected\n", (int)line);
+            exit(-1);
+        }
+        *++e = BNZ;
+        *++e = (int64_t)a;
+        if (tk == ';') {
+            next();
+        } else {
+            printf("%d: semicolon expected\n", (int)line);
+            exit(-1);
+        }
+        j = saved_cnt_sp;
+        while (j < cnt_sp) { *(int64_t *)cnt_patches[j] = inc_top; j = j + 1; }
+        j = saved_brk_sp;
+        while (j < brk_sp) { *(int64_t *)brk_patches[j] = (int64_t)(e + 1); j = j + 1; }
+        cnt_sp = saved_cnt_sp;
+        brk_sp = saved_brk_sp;
     } else if (tk == Switch) {
         next();
         if (tk == '(') {
@@ -1205,6 +1393,30 @@ void stmt() {
             id[Extent] = scope_stack[scope_sp + 4];
         }
         next();
+    } else if (tk == Break) {
+        next();
+        if (tk == ';') {
+            next();
+        } else {
+            printf("%d: semicolon expected\n", (int)line);
+            exit(-1);
+        }
+        *++e = JMP;
+        *++e = 0;
+        brk_patches[brk_sp] = (int64_t)(e);
+        brk_sp = brk_sp + 1;
+    } else if (tk == Continue) {
+        next();
+        if (tk == ';') {
+            next();
+        } else {
+            printf("%d: semicolon expected\n", (int)line);
+            exit(-1);
+        }
+        *++e = JMP;
+        *++e = 0;
+        cnt_patches[cnt_sp] = (int64_t)(e);
+        cnt_sp = cnt_sp + 1;
     } else if (tk == ';') {
         next();
     } else {
@@ -1269,11 +1481,12 @@ int main(int argc, char **argv) {
     memset(struct_syms, 0, 256 * sizeof(int64_t));
 
     p = "char else enum if int int32_t int64_t return sizeof struct typedef "
-        "union while switch case default break open read close printf malloc "
-        "free memset memcmp exit write system popen pclose fread memcpy "
-        "memmove strcpy strcmp strlen strcat strncmp void main";
+        "union while for do switch case default break continue open read "
+        "close printf malloc free memset memcmp exit write system popen "
+        "pclose fread memcpy memmove strcpy strcmp strlen strcat strncmp "
+        "void main";
     i = Char;
-    while (i <= Break) {
+    while (i <= Continue) {
         next();
         id[Tk] = i++;
     } // add keywords to symbol table
