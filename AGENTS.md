@@ -1,70 +1,81 @@
 # C4 Development Guide
 
-## Architecture
+## What is c4
 
-c4 is a self-compiling minimal C compiler. It compiles a subset of C into bytecode and interprets it in a stack-based VM. The compiler can compile its own source code: `./build/c4 c4.c test/hello.c`.
+c4 is a minimal self-compiling C compiler by Robert Swierczek. It compiles a subset of C
+to bytecode and interprets it in a stack-based VM. The entire compiler fits in ~800 lines of C.
+It can compile its own source: `./build/c4 c4.c test/struct_simple.c`.
+
+---
+
+## Architecture
 
 ### Type System (PTR=256 encoding)
 
-| Type | Encoding | Check |
-|------|----------|-------|
-| CHAR | 0 | `ty == CHAR` |
-| INT32 | 1 | `ty == INT32` |
-| INT64 | 2 | `ty == INT64` |
-| Structs | 3..255 | `ty > INT64 && ty < PTR` |
-| CHAR* | 256 | `ty >= PTR` |
-| INT32* | 257 | |
-| Struct A* | 259 | |
-| CHAR** | 512 | |
+| Type      | Encoding | Check                      |
+|-----------|----------|----------------------------|
+| CHAR      | 0        | `ty == CHAR`               |
+| INT32     | 1        | `ty == INT32`              |
+| INT64     | 2        | `ty == INT64`              |
+| Structs   | 3..255   | `ty > INT64 && ty < PTR`   |
+| CHAR*     | 256      | `ty >= PTR`                |
+| INT32*    | 257      |                            |
+| Struct A* | 259      |                            |
+| CHAR**    | 512      |                            |
 
-- Pointers: `ty >= PTR` (>= 256). Strip one level: `ty - PTR`.
-- Struct values: `ty > INT64 && ty < PTR` (3..255). Keep address in accumulator, no load.
+- Pointers: `ty >= PTR`. Strip one level: `ty - PTR`.
+- Struct values: `ty > INT64 && ty < PTR`. Keep address in accumulator; no load.
 - Struct lookup: `struct_syms[ty - INT64 - 1]` maps sequential ID to symbol table entry.
 
 ### Key Globals
 
-- `struct_syms` — pointer to array mapping struct IDs (0-252) to symbol entries
-- `num_structs` — number of defined structs (max 253)
 - `e` — code emission pointer; `*++e = opcode` emits instructions
-- `id` — current identifier in symbol table (array of Idsz=12 int64_t fields)
+- `id` — current identifier (pointer into `sym_pool`, array of `Idsz=13` int64_t fields)
 - `sym` — symbol table base
+- `struct_syms` — array mapping struct IDs (0-252) to symbol entries
+- `num_structs` — number of defined structs (max 253)
+- `loc` — local variable frame offset set at function entry
+- `i` — multipurpose counter / current local slot index
+- `scope_sp` — scope stack pointer for block-scoped variable save/restore
+- `brk_sp`, `cnt_sp` — break/continue patch stack pointers
 
-### Symbol Table Fields (Idsz = 12)
+### Symbol Table Fields (Idsz = 13)
 
-`Tk, Hash, Name, Class, Type, Val, HClass, HType, HVal, Utyedef, Extent, Sline`
+`Tk, Hash, Name, Class, Type, Val, HClass, HType, HVal, Utyedef, Extent, Sline, Idsz`
 
-- `Extent` — array size (0 for non-arrays). Arrays skip load in Id handler.
-- `Sline` — for structs: linked list of members `m[0]=hash, m[1]=type, m[2]=offset, m[3]=next`
-- `Val` — for structs: total size in bytes (with padding)
+- `Class` — `Fun`, `Sys`, `Glo`, `Loc`, or 0 (unbound)
+- `Extent` — array size (0 for scalars). Arrays skip load in Id handler (address IS the value).
+- `Sline` — for structs: linked list head of members `m[0]=hash, m[1]=type, m[2]=offset, m[3]=next`
+- `Val` — for structs: total padded size in bytes; for locals/globals: address/offset
 
 ### Key Functions
 
-- `next()` — lexer/tokenizer
-- `memacc()` — shared member access for `.` and `->` operators
+- `next()` — lexer/tokenizer; sets `tk` and `id`
+- `memacc()` — shared member access handler for `.` and `->` operators
 - `expr(lev)` — expression parser with precedence climbing
-- `stmt()` — statement parser (if/while/return/block)
-- `main()` — declarations parser + VM interpreter
+- `stmt()` — statement parser
+- `main()` — top-level declaration parser + VM interpreter
 
-### Struct Support
+### Implemented Language Features
 
-- **Definitions**: Sequential IDs assigned (3, 4, 5, ...). Members stored as linked list.
-- **Padding**: Members aligned to natural boundary (char=1, int32=4, int64/ptr/struct=8). Struct size padded to 8-byte boundary.
-- **Member access**: `memacc()` emits `PSH; IMM offset; ADD` then loads based on member type. Nested structs keep address (no load).
-- **sizeof(struct X)**: Supported. Returns padded struct size.
-- **Casts**: `(struct X *)` supported in cast expressions.
-
-### Array Support
-
-- Declaration: `int a[5];` (local) or `int g[4];` (global). Stored in `id[Extent]`.
-- Type becomes `element_type + PTR`. Arrays skip load in Id handler (address IS the value).
-- Element size scaling handles all types including structs via `struct_syms[...][Val]`.
-- Postfix `[i]` chains with `.` and `->`: `pts[i].x` works.
+- Types: `char`, `int` (=int64_t), `int32_t`, `int64_t`, pointers, structs, arrays
+- Control flow: `if`/`else`, `while`, `for`, `do`/`while`, `switch`/`case`/`default`
+- Statements: `break`, `continue`, `return`
+- Expressions: full precedence climbing, `sizeof`, casts, `++`/`--`, `->`, `.`, `[]`
+- Scoped declarations: `{ int x = 0; }` and `for (int i = 0; ...)`
+- Block-level variable declarations with initializers
 
 ### VM Opcodes
 
-Arithmetic: LEA, IMM, PSH, LI, LC, LI32, SI, SC, SI32, ADD, SUB, MUL, DIV, MOD, etc.
-Control: JMP, JSR, BZ, BNZ, ENT, ADJ, LEV.
-System: OPEN, READ, CLOS, PRTF, MALC, FREE, MSET, MCMP, EXIT, WRIT, SYST, POPN, PCLS, FRED.
+```
+LEA, IMM, JMP, JSR, BZ, BNZ, ENT, ADJ, LEV
+LI, LC, LI32, SI, SC, SI32, PSH
+OR, XOR, AND, EQ, NE, LT, GT, LE, GE, SHL, SHR, ADD, SUB, MUL, DIV, MOD
+OPEN, READ, CLOS, PRTF, MALC, FREE, MSET, MCMP, EXIT, WRIT, SYST
+POPN, PCLS, FRED, MCPY, MMOV, SCPY, SCMP, SLEN, SCAT, SNCM, DUP
+```
+
+---
 
 ## Build & Test
 
@@ -73,39 +84,166 @@ System: OPEN, READ, CLOS, PRTF, MALC, FREE, MSET, MCMP, EXIT, WRIT, SYST, POPN, 
 clang -o build/c4 c4.c -O3 -m64 -std=c11 -Wall
 
 # Run individual tests
-./build/c4 test/struct/simple.c
+./build/c4 test/struct_simple.c
 ./build/c4 test/grok.c
-./build/c4 test/arrays.c
+./build/c4 test/loops.c
 
-# Self-compilation (c4 compiles itself, then runs a test)
-./build/c4 c4.c test/struct/simple.c
+# Self-compilation test (c4 compiles itself, then runs a test)
+timeout 10 ./build/c4 c4.c test/struct_simple.c
 
-# Run with cc/gcc to cross-check (all tests have #include headers)
-cc test/grok.c -o /tmp/grok && /tmp/grok
+# Cross-check with system compiler
+cc test/grok.c -o ./tmp/grok && ./tmp/grok
 
 # Full test suite
 ./build/c4 test/test.c
 ```
 
-## CI/CD
+### Temporary files
 
-- **File**: `.github/workflows/ci.yml`
-- **Build**: `clang -o c4 c4.c -O3 -m64 -std=c11 -w` (uses `-w` for Linux int64_t format warnings)
-- **Tests**: struct tests, io.c, self-compilation, all-tests summary
+Use `./tmp/` (gitignored) for all temporary test files and debugging output — **not** `/tmp/`.
+This avoids VSCode permission prompts and keeps scratch work in the project directory.
+
+```sh
+cc test/grok.c -o ./tmp/grok && ./tmp/grok
+cat > ./tmp/mytest.c << 'EOF'
+...
+EOF
+./build/c4 ./tmp/mytest.c
+```
+
+### Test Files
+
+All test files include `<stdio.h>` so they compile with both c4 and cc/gcc/clang.
+
+- `test/grok.c` — padding, sizeof(struct), cast, struct ptr arith
+- `test/arrays.c` — all array types including struct arrays
+- `test/loops.c` — for/while/do-while with break/continue, scoped for declarations
+- `test/struct_ptr_arith.c` — pointer arithmetic, pre/post increment
+- `test/struct_simple.c`, `test/struct_nested.c` — basic struct operations
+- `test/int32_64.c` — int32_t/int64_t operations
+- `test/io.c` — file I/O (open/read/write)
+- `test/scope.c` — block-scoped declarations, init-in-declaration, (void) params
+- `test/test.c` — test runner (discovers and runs all tests)
+
+### CI
+
+`.github/workflows/ci.yml` — builds on ubuntu-latest with `clang -w` (suppresses Linux
+int64_t format warnings), runs struct tests, io, self-compilation.
+
+---
 
 ## Self-Compilation Constraints
 
-All c4.c code must be valid c4 input:
-- No forward references to globals (declare before use)
-- No mid-block variable declarations (all at top of function/block)
-- No complex macros (c4 treats `#` as comment-to-EOL)
-- No `unsigned`, `float`, `double`, `for`, `do`, `switch`
-- `int` = `int64_t` (8 bytes). Use `(int)` casts for printf `%d`.
-- c4's printf supports max 5 data arguments (format + 5 values)
+`c4.c` must be valid c4 input. Now that c4 supports `for`/`do`/`break`/`continue`/`switch`,
+these may be used in `c4.c` itself. Remaining constraints:
 
-## Development Workflow
+- **No forward references to globals** — declare before use
+- **No mid-block variable declarations** — all locals at top of function or block
+- **No `#define` macros** — c4 treats `#` as comment-to-EOL
+- **No `unsigned`, `float`, `double`** — not implemented
+- **No `&&` or `||` in variable declarations** — short-circuit not valid at decl site
+- **`int` = `int64_t` (8 bytes)** — use `(int)` casts for printf `%d`
+- **printf max 5 data arguments** — format + up to 5 values (6 total)
+- **Always verify after changes**: `timeout 10 ./build/c4 c4.c test/struct_simple.c`
 
-- Build outputs: `./build/` (gitignored)
-- Temp files: `./tmp/` (gitignored, avoids VSCode permission prompts on `/tmp/`)
-- Always test self-compilation after changes: `timeout 10 ./build/c4 c4.c test/struct/simple.c`
-- Test with cc/gcc to catch semantic differences (int size 4 vs 8)
+---
+
+## Key Implementation Details
+
+- `memacc()` handles both `.` and `->` member access (shared code path)
+- Arrays use `id[Extent]` to store size; the Id handler skips the load (address is the value)
+- Struct members stored as linked list: `m[0]=hash, m[1]=type, m[2]=offset, m[3]=next`
+- Struct padding: members aligned to natural boundary; struct size padded to 8 bytes
+- Postfix loop `while (tk == Brak || tk == '.' || tk == Arrow)` handles chaining like `pts[i].x`
+- Postfix `Brak` must use `*++e = PSH` (append), never `*e = PSH` (replace)
+- `break`/`continue` use global patch arrays (`brk_patches[]`, `cnt_patches[]`); each
+  emits `JMP 0` and records the operand address; patches applied after loop exit
+- `for` increment code is buffered (`inc_buf[128]`), rolled back, body emitted, then
+  re-emitted — `continue` targets the re-emitted increment start
+- Scoped `for (int j = ...)` uses `scope_stack` to save/restore the variable binding;
+  restoration must use a local pointer (`d`), not the global `id`, to avoid clobbering
+  the currently-parsed identifier
+
+## Common Pitfalls
+
+- Lexer maps `[` to `Brak` token (169), not ASCII `[` (91). Use `tk == Brak`, not `tk == '['`.
+- `id` pointer changes after `next()` — save to local (`d`) before calling next() if needed.
+- Element size must handle structs everywhere: Add, Sub, Inc, Dec, Brak (postfix and precedence).
+- `PSH` pushes `a` without modifying it — subsequent `LI` reloads from address still in `a`.
+- Scope restoration loops must use a local pointer variable, not the global `id`, so the
+  currently-parsed identifier's entry is not overwritten.
+
+---
+
+## Future Plans
+
+### Function Pointers
+
+**Priority: HIGH**
+
+Allow storing and calling functions through pointer variables.
+
+**Design:**
+
+- Type encoding: use a dedicated sentinel (e.g., `FNPTR = PTR + PTR`) or reuse `INT64 + PTR`
+  with a flag. Simplest: treat function pointer as opaque `int64_t` holding a code address;
+  mark with a new class `FnPtr` or reuse `Glo`/`Loc` with a special type.
+- Storing a function address: `fp = myfunc;` emits `IMM <fun_address>` (like a global address).
+- Indirect call opcode: add `JSRI` — pops the call address from the stack (or reads from `a`),
+  pushes return address, jumps. VM: `sp = sp - 1; *sp = (int64_t)(pc + 1); pc = (int64_t *)*sp_arg;`
+- Call syntax: `fp(args)` or `(*fp)(args)` — detect in `expr()` when an `Id` with function-pointer
+  type is followed by `(`. Push args normally, then emit `PSH; JSRI` (push `fp` value, indirect call).
+- Declaration syntax: `int (*fp)(int, int);` — parser extension for declarator with `(*)` inside.
+  Minimal approach: `int *fp;` treated as function pointer when assigned a `Fun`-class identifier.
+
+**New opcode required**: `JSRI` (indirect JSR via accumulator or top-of-stack).
+
+**Estimated cost**: ~80 lines.
+
+---
+
+### Unsigned Integer Types (`uint32_t`, `uint64_t`)
+
+**Priority: LOW**
+
+- New opcodes for unsigned compare: `BLTU`, `BGTU`, `BLEU`, `BGEU`
+- Unsigned division/modulo opcodes
+- Logical (unsigned) right shift
+- Type encoding to distinguish signed vs unsigned
+- `%u` printf format support
+
+**Estimated cost**: ~100 lines.
+
+---
+
+### Floating Point (`float`, `double`)
+
+**Priority: LOW**
+
+- New VM opcodes: `FADD`, `FSUB`, `FMUL`, `FDIV`, `FEQ`, `FNE`, `FLT`, `FGT`, `FLE`, `FGE`,
+  `ITOF`, `FTOI`
+- Literal parsing: `1.23`, `1e-5` in `next()`
+- Type promotion rules (int op float → float)
+- `%f` printf support
+- Fundamental change to "everything is an integer" architecture.
+
+**Estimated cost**: ~200–300 lines.
+
+---
+
+### `typedef` / `union`
+
+**Priority: MEDIUM**
+
+- `typedef`: alias for an existing type. Tokens already reserved. Cost: ~30 lines.
+- `union`: overlapping member storage (all members at offset 0, size = largest member).
+  Token already reserved. Cost: ~50 lines.
+
+---
+
+### Preprocessor Macros (`#define` with arguments)
+
+**Priority: VERY LOW**
+
+A full macro expander is nearly as complex as the compiler itself. Recommendation: keep
+restricting to simple numeric constants, or use an external preprocessor (`cpp file.c | ./build/c4`).
