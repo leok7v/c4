@@ -95,7 +95,8 @@ enum {
     Default, Break, Continue,
     Assign, Cond, Lor,
     Lan, Or, Xor, And, Eq, Ne, Lt, Gt, Le, Ge, Shl, Shr, Add, Sub, Mul, Div,
-    Mod, Inc, Dec, Brak, Arrow
+    Mod, Inc, Dec, Brak, Arrow,
+    AddAssign, SubAssign, MulAssign, DivAssign, ModAssign, AndAssign, OrAssign, XorAssign, ShlAssign, ShrAssign
 };
 
 // opcodes (VM instructions)
@@ -229,10 +230,13 @@ void next() {
                 while (*p != 0 && *p != '\n') {
                     ++p;
                 }
+            } else if (*p == '=') {
+                ++p;
+                tk = DivAssign;
             } else {
                 tk = Div;
-                return;
             }
+            return;
         } else if (tk == '\'' || tk == '"') {
             pp = data;
             while (*p != 0 && *p != tk) {
@@ -265,6 +269,9 @@ void next() {
             if (*p == '+') {
                 ++p;
                 tk = Inc;
+            } else if (*p == '=') {
+                ++p;
+                tk = AddAssign;
             } else {
                 tk = Add;
             }
@@ -276,6 +283,9 @@ void next() {
             } else if (*p == '>') {
                 ++p;
                 tk = Arrow;
+            } else if (*p == '=') {
+                ++p;
+                tk = SubAssign;
             } else {
                 tk = Sub;
             }
@@ -287,23 +297,33 @@ void next() {
             }
             return;
         } else if (tk == '<') {
-            if (*p == '=') {
+            if (*p == '<') {
+                ++p;
+                if (*p == '=') {
+                    ++p;
+                    tk = ShlAssign;
+                } else {
+                    tk = Shl;
+                }
+            } else if (*p == '=') {
                 ++p;
                 tk = Le;
-            } else if (*p == '<') {
-                ++p;
-                tk = Shl;
             } else {
                 tk = Lt;
             }
             return;
         } else if (tk == '>') {
-            if (*p == '=') {
+            if (*p == '>') {
+                ++p;
+                if (*p == '=') {
+                    ++p;
+                    tk = ShrAssign;
+                } else {
+                    tk = Shr;
+                }
+            } else if (*p == '=') {
                 ++p;
                 tk = Ge;
-            } else if (*p == '>') {
-                ++p;
-                tk = Shr;
             } else {
                 tk = Gt;
             }
@@ -312,6 +332,9 @@ void next() {
             if (*p == '|') {
                 ++p;
                 tk = Lor;
+            } else if (*p == '=') {
+                ++p;
+                tk = OrAssign;
             } else {
                 tk = Or;
             }
@@ -320,18 +343,36 @@ void next() {
             if (*p == '&') {
                 ++p;
                 tk = Lan;
+            } else if (*p == '=') {
+                ++p;
+                tk = AndAssign;
             } else {
                 tk = And;
             }
             return;
         } else if (tk == '^') {
-            tk = Xor;
+            if (*p == '=') {
+                ++p;
+                tk = XorAssign;
+            } else {
+                tk = Xor;
+            }
             return;
         } else if (tk == '%') {
-            tk = Mod;
+            if (*p == '=') {
+                ++p;
+                tk = ModAssign;
+            } else {
+                tk = Mod;
+            }
             return;
         } else if (tk == '*') {
-            tk = Mul;
+            if (*p == '=') {
+                ++p;
+                tk = MulAssign;
+            } else {
+                tk = Mul;
+            }
             return;
         } else if (tk == '[') {
             tk = Brak;
@@ -1005,6 +1046,126 @@ void expression(int64_t lev) {
                 }
                 expression(Assign);
                 ty = t;
+                store();
+                break;
+            case AddAssign:
+                next();
+                if (*e == LC) { *e = PSH; *++e = LC;
+                } else if (*e == LI32) { *e = PSH; *++e = LI32;
+                } else if (*e == LI) { *e = PSH; *++e = LI;
+                } else { fatal("bad lvalue in compound assignment"); }
+                *++e = PSH;
+                expression(AddAssign);
+                ty = t;
+                *++e = ADD;
+                store();
+                break;
+            case SubAssign:
+                next();
+                if (*e == LC) { *e = PSH; *++e = LC;
+                } else if (*e == LI32) { *e = PSH; *++e = LI32;
+                } else if (*e == LI) { *e = PSH; *++e = LI;
+                } else { fatal("bad lvalue in compound assignment"); }
+                *++e = PSH;
+                expression(SubAssign);
+                ty = t;
+                *++e = SUB;
+                store();
+                break;
+            case MulAssign:
+                next();
+                if (*e == LC) { *e = PSH; *++e = LC;
+                } else if (*e == LI32) { *e = PSH; *++e = LI32;
+                } else if (*e == LI) { *e = PSH; *++e = LI;
+                } else { fatal("bad lvalue in compound assignment"); }
+                *++e = PSH;
+                expression(MulAssign);
+                ty = t;
+                *++e = MUL;
+                store();
+                break;
+            case DivAssign:
+                next();
+                if (*e == LC) { *e = PSH; *++e = LC;
+                } else if (*e == LI32) { *e = PSH; *++e = LI32;
+                } else if (*e == LI) { *e = PSH; *++e = LI;
+                } else { fatal("bad lvalue in compound assignment"); }
+                *++e = PSH;
+                expression(DivAssign);
+                ty = t;
+                *++e = DIV;
+                store();
+                break;
+            case ModAssign:
+                next();
+                if (*e == LC) { *e = PSH; *++e = LC;
+                } else if (*e == LI32) { *e = PSH; *++e = LI32;
+                } else if (*e == LI) { *e = PSH; *++e = LI;
+                } else { fatal("bad lvalue in compound assignment"); }
+                *++e = PSH;
+                expression(ModAssign);
+                ty = t;
+                *++e = MOD;
+                store();
+                break;
+            case AndAssign:
+                next();
+                if (*e == LC) { *e = PSH; *++e = LC;
+                } else if (*e == LI32) { *e = PSH; *++e = LI32;
+                } else if (*e == LI) { *e = PSH; *++e = LI;
+                } else { fatal("bad lvalue in compound assignment"); }
+                *++e = PSH;
+                expression(AndAssign);
+                ty = t;
+                *++e = AND;
+                store();
+                break;
+            case OrAssign:
+                next();
+                if (*e == LC) { *e = PSH; *++e = LC;
+                } else if (*e == LI32) { *e = PSH; *++e = LI32;
+                } else if (*e == LI) { *e = PSH; *++e = LI;
+                } else { fatal("bad lvalue in compound assignment"); }
+                *++e = PSH;
+                expression(OrAssign);
+                ty = t;
+                *++e = OR;
+                store();
+                break;
+            case XorAssign:
+                next();
+                if (*e == LC) { *e = PSH; *++e = LC;
+                } else if (*e == LI32) { *e = PSH; *++e = LI32;
+                } else if (*e == LI) { *e = PSH; *++e = LI;
+                } else { fatal("bad lvalue in compound assignment"); }
+                *++e = PSH;
+                expression(XorAssign);
+                ty = t;
+                *++e = XOR;
+                store();
+                break;
+            case ShlAssign:
+                next();
+                if (*e == LC) { *e = PSH; *++e = LC;
+                } else if (*e == LI32) { *e = PSH; *++e = LI32;
+                } else if (*e == LI) { *e = PSH; *++e = LI;
+                } else { fatal("bad lvalue in compound assignment"); }
+                *++e = PSH;
+                expression(ShlAssign);
+                ty = t;
+                *++e = SHL;
+                store();
+                break;
+            case ShrAssign:
+                next();
+                if (*e == LC) { *e = PSH; *++e = LC;
+                } else if (*e == LI32) { *e = PSH; *++e = LI32;
+                } else if (*e == LI) { *e = PSH; *++e = LI;
+                } else { fatal("bad lvalue in compound assignment"); }
+                *++e = PSH;
+                expression(ShrAssign);
+                ty = t;
+                *++e = SHR;
                 store();
                 break;
             case Cond:

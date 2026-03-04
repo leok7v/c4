@@ -52,7 +52,7 @@ for_init       = type_spec { "*" } identifier "=" expression
 switch_case    = ( "case" number | "default" ) ":" { statement } ;
 
 expression     = assign_expr ;
-assign_expr    = cond_expr [ "=" assign_expr ] ;
+assign_expr    = cond_expr [ ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=" ) assign_expr ] ;
 cond_expr      = lor_expr [ "?" expression ":" cond_expr ] ;
 lor_expr       = land_expr { "||" land_expr } ;
 land_expr      = or_expr { "&&" or_expr } ;
@@ -95,6 +95,7 @@ identifier     = letter { letter | digit | "_" } ;
 - Logical: `&&`, `||`, `!`
 - Bitwise: `&`, `|`, `^`, `~`, `<<`, `>>`
 - Assignment: `=`
+- Compound assignment: `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
 - Increment/decrement: `++`, `--` (prefix and postfix)
 - Ternary: `? :`
 - Sizeof: `sizeof(type)`, `sizeof(expr)`
@@ -157,11 +158,9 @@ identifier     = letter { letter | digit | "_" } ;
 - `restrict`, `volatile`
 
 ### Operators
-- Compound assignment: `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
 - Comma operator (except in for loops and function calls)
 
 ### Declarations
-- Array/struct initializers: `int arr[] = {1, 2, 3};`
 - Designated initializers: `.field = value`
 - Multiple declarators with init: `int a = 1, b = 2;` (partial support)
 - Extern declarations
