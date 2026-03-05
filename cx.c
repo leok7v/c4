@@ -20,10 +20,17 @@
 #include <string.h>
 #include <stdbool.h>
 
-#ifdef __APPLE__
-#define _DARWIN_C_SOURCE
+#if defined(__linux__)
+    #define _GNU_SOURCE
+#elif defined(__APPLE__)
+    #define _DARWIN_C_SOURCE
+#endif
+
+#if defined(__APPLE__) || defined(__linux__)
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 
 char *p, *lp, // current position in source code
