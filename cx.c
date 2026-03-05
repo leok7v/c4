@@ -93,7 +93,7 @@ enum {
     Bool, Char, Const, Else, Enum, If, Inline, Int, Int32_t, Int64_t, Return,
     Sizeof, Static, Struct, Typedef, Union, Void, While, For, Do, Switch, Case,
     Default, Break, Continue,
-    Assign, Cond, Lor,
+    Comma, Assign, Cond, Lor,
     Lan, Or, Xor, And, Eq, Ne, Lt, Gt, Le, Ge, Shl, Shr, Add, Sub, Mul, Div,
     Mod, Inc, Dec, Brak, Arrow,
     AddAssign, SubAssign, MulAssign, DivAssign, ModAssign, AndAssign, OrAssign, XorAssign, ShlAssign, ShrAssign
@@ -380,8 +380,11 @@ void next() {
         } else if (tk == '?') {
             tk = Cond;
             return;
+        } else if (tk == ',') {
+            tk = Comma;
+            return;
         } else if (tk == '~' || tk == ';' || tk == '{' || tk == '}' ||
-                   tk == '(' || tk == ')' || tk == ']' || tk == ',' ||
+                   tk == '(' || tk == ')' || tk == ']' ||
                    tk == ':' || tk == '.') {
             return;
         }
@@ -448,7 +451,7 @@ void expect(int64_t t, char *s) { // expect token t and advance, else fatal
     }
 }
 
-void skip_comma() { if (tk == ',') { next(); } }
+void skip_comma() { if (tk == Comma) { next(); } }
 void skip_const() { while (tk == Const) { next(); } }
 void require(int64_t t, char *s) { if (tk != t) { fatal(s); } }
 
@@ -628,7 +631,7 @@ void statement();
 void if_stmt() {
     int64_t *b;
     expect('(', "open paren expected");
-    expression(Assign);
+    expression(Comma);
     expect(')', "close paren expected");
     *++e = BZ;
     b = ++e;
@@ -648,7 +651,7 @@ void while_stmt() {
     int64_t saved_brk_sp, saved_cnt_sp;
     a = e + 1;
     expect('(', "open paren expected");
-    expression(Assign);
+    expression(Comma);
     expect(')', "close paren expected");
     *++e = BZ;
     b = ++e;
@@ -686,7 +689,7 @@ void do_while_stmt() {
         fatal("open paren expected");
     }
     inc_top = (int64_t)(e + 1);
-    expression(Assign);
+    expression(Comma);
     expect(')', "close paren expected");
     *++e = BNZ;
     *++e = (int64_t)a;
@@ -704,7 +707,7 @@ void do_while_stmt() {
 void switch_stmt() {
     int64_t *b, *break_stack[256], **break_sp, case_val;
     expect('(', "open paren expected");
-    expression(Assign);
+    expression(Comma);
     expect(')', "close paren expected");
     *++e = PSH;
     expect('{', "open brace expected");
@@ -757,7 +760,7 @@ void switch_stmt() {
 
 void return_stmt() {
     if (tk != ';') {
-        expression(Assign);
+        expression(Comma);
         if (fn_ret_ty > INT64 && fn_ret_ty < FNPTR) {
             int64_t sty, sz;
             sty = fn_ret_ty - INT64 - 1;
@@ -920,7 +923,7 @@ void expression(int64_t lev) {
                 expression(Inc);
                 ty = t;
             } else {
-                expression(Assign);
+                expression(Comma);
                 expect(')', "close paren expected");
             }
             break;
@@ -1037,6 +1040,13 @@ void expression(int64_t lev) {
     while (tk >= lev) {
         t = ty;
         switch (tk) {
+            case Comma:
+                *++e = PSH;  // push left operand
+                next();
+                expression(Comma);  // parse right operand
+                *++e = ADJ;
+                *++e = 1;  // discard left operand
+                break;
             case Assign:
                 next();
                 if (*e == LC || *e == LI32 || *e == LI) {
@@ -1320,7 +1330,7 @@ void statement() {
                 fatal("semicolon expected");
             }
         } else if (tk != ';') {
-            expression(Assign);
+            expression(Comma);
             if (tk == ';') {
                 next();
             } else {
@@ -1395,14 +1405,14 @@ void statement() {
         next();
         return_stmt();
     } else if (tk == '{') {
-        next();
+                next();
         int64_t mark = scope_sp;
         skip_const();
         int64_t bt, sz;
-        while (tk == Int || tk == Bool || tk == Int32_t || tk == Int64_t ||
+                while (tk == Int || tk == Bool || tk == Int32_t || tk == Int64_t ||
                tk == Char || tk == Struct || tk == Union ||
                (tk == Id && id[Class] == Tdef)) {
-            if (tk == Struct || tk == Union) {
+                        if (tk == Struct || tk == Union) {
                 next();
                 require(Id, "bad struct/union type");
                 if (id[Class] == Struct) {
@@ -1433,11 +1443,29 @@ void statement() {
             }
             while (tk != ';') {
                 ty = bt;
+                int64_t is_fnptr = 0;
                 while (tk == Mul) {
                     next();
                     ty = ty + PTR;
                 }
-                require(Id, "bad local declaration");
+                // Check for function pointer declarator: (*name)(params)
+                if (tk == '(') {
+                    next();
+                    expect(Mul, "* expected in fnptr decl");
+                    require(Id, "bad fnptr decl name");
+                    id[Type] = FNPTR;
+                    ty = FNPTR;
+                    next();
+                    expect(')', ") expected in fnptr decl");
+                    // Params are optional: (*fp) or (*fp)(int, int)
+                    if (tk == '(') {
+                        next();
+                        while (tk != ')') { next(); }
+                        expect(')', ") expected");
+                    }
+                    is_fnptr = 1;
+                }
+                if (!is_fnptr) { require(Id, "bad local declaration"); }
                 scope_stack[scope_sp] = (int64_t)id;
                 scope_stack[scope_sp + 1] = id[Class];
                 scope_stack[scope_sp + 2] = id[Type];
@@ -1541,7 +1569,7 @@ void statement() {
                tk == Int32_t || tk == Int64_t || tk == Char || tk == Struct ||
                tk == Union || (tk == Id && id[Class] == Tdef)) {
         // mid-block declaration (possibly static)
-        int64_t is_static = 0;
+                int64_t is_static = 0;
         if (tk == Static) { is_static = 1; next(); }
         skip_const();
         int64_t bt;
@@ -1563,8 +1591,23 @@ void statement() {
         }
         while (tk != ';') {
             ty = bt;
+            int64_t is_fnptr = 0;
             while (tk == Mul) { next(); ty = ty + PTR; }
-            require(Id, "bad local declaration");
+            // Check for function pointer declarator: (*name)(params)
+            if (tk == '(') {
+                                next();
+                expect(Mul, "* expected in fnptr decl");
+                require(Id, "bad fnptr decl name");
+                id[Type] = FNPTR;
+                ty = FNPTR;
+                next();
+                expect(')', ") expected in fnptr decl");
+                expect('(', "( expected for fnptr params");
+                while (tk != ')') { next(); }
+                expect(')', ") expected");
+                is_fnptr = 1;
+            }
+            if (!is_fnptr) { require(Id, "bad local declaration"); }
             scope_stack[scope_sp] = (int64_t)id;
             scope_stack[scope_sp + 1] = id[Class];
             scope_stack[scope_sp + 2] = id[Type];
@@ -1577,7 +1620,7 @@ void statement() {
                 id[Type] = ty;
                 id[Extent] = 0;
                 id[Val] = (int64_t)data;
-                next();
+                if (!is_fnptr) { next(); }
                 if (tk == Brak) {
                     next();
                     int64_t arr_size = 0;
@@ -1669,7 +1712,7 @@ void statement() {
                 id[Class] = Loc;
                 id[Type] = ty;
                 id[Extent] = 0;
-                next();
+                if (!is_fnptr) { next(); }
                 if (tk == Brak) {
                     next();
                     int64_t arr_size = 0;
@@ -2859,11 +2902,29 @@ int64_t *compile(char *filename) {
                     }
                     while (tk != ';') {
                         ty = bt;
+                        int64_t is_fnptr = 0;
                         while (tk == Mul) {
                             next();
                             ty = ty + PTR;
                         }
-                        require(Id, "bad local declaration");
+                        // Check for function pointer declarator: (*name)(params)
+                        if (tk == '(') {
+                            next();
+                            expect(Mul, "* expected in fnptr decl");
+                            require(Id, "bad fnptr decl name");
+                            id[Type] = FNPTR;
+                            ty = FNPTR;
+                            next();
+                            expect(')', ") expected in fnptr decl");
+                            // Params are optional
+                            if (tk == '(') {
+                                next();
+                                while (tk != ')') { next(); }
+                                expect(')', ") expected");
+                            }
+                            is_fnptr = 1;
+                        }
+                        if (!is_fnptr) { require(Id, "bad local declaration"); }
                         if (id[Class] == Loc) { fatal("dup local def"); }
                         id[HClass] = id[Class];
                         id[Class] = Loc;
@@ -2871,7 +2932,7 @@ int64_t *compile(char *filename) {
                         id[Type] = ty;
                         id[HVal] = id[Val];
                         id[Extent] = 0;
-                        next();
+                        if (!is_fnptr) { next(); }
                         if (tk == Brak) {
                             next();
                             int64_t arr_size = 0;

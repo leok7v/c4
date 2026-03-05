@@ -51,7 +51,8 @@ for_init       = type_spec { "*" } identifier "=" expression
 
 switch_case    = ( "case" number | "default" ) ":" { statement } ;
 
-expression     = assign_expr ;
+expression     = comma_expr ;
+comma_expr     = assign_expr { "," comma_expr } ;
 assign_expr    = cond_expr [ ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=" ) assign_expr ] ;
 cond_expr      = lor_expr [ "?" expression ":" cond_expr ] ;
 lor_expr       = land_expr { "||" land_expr } ;
@@ -86,7 +87,7 @@ identifier     = letter { letter | digit | "_" } ;
 - Structs and unions with member access (`.`, `->`)
 - Arrays (fixed size): `int arr[10]`
 - Array initializers: `int arr[] = {1, 2, 3};` (global, local, static local)
-- Function pointers: `int (*fp)(int, int)`
+- Function pointers: `int (*fp)(int, int)` (declaration supported, calling needs work)
 - Typedefs for all above
 
 ### Operators
@@ -97,6 +98,7 @@ identifier     = letter { letter | digit | "_" } ;
 - Assignment: `=`
 - Compound assignment: `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
 - Increment/decrement: `++`, `--` (prefix and postfix)
+- Comma: `(expr1, expr2)` - evaluates left (discards), returns right
 - Ternary: `? :`
 - Sizeof: `sizeof(type)`, `sizeof(expr)`
 - Address/dereference: `&`, `*`
@@ -158,7 +160,6 @@ identifier     = letter { letter | digit | "_" } ;
 - `restrict`, `volatile`
 
 ### Operators
-- Comma operator (except in for loops and function calls)
 
 ### Declarations
 - Designated initializers: `.field = value`
